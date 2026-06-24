@@ -27,7 +27,7 @@ Root (`/`) redirects directly to the game.
 
 Main game route:
 
-- `demo/zemeroth-demo/index.html`
+- `demo/human-vs-bots/index.html`
 
 Alternative prototype route:
 
@@ -68,19 +68,16 @@ The flow is aligned with Stellar hackathon architecture and is prepared for deep
 ## Useful scripts
 
 - `scripts/serve-demos.sh`
-- `scripts/serve-zemeroth.sh`
+- `scripts/serve-human-vs-bots.sh`
 - `scripts/serve-civ-lite.sh`
 - `scripts/game-studio.sh`
 
 ## Third-party references and licenses
 
 - Unciv assets inspiration (visual assets used in demo pipeline)
-- Zemeroth reference integration path
 - Stellar/Game Studio quickstart alignment
 
 License files in repo root:
 
 - `THIRD_PARTY_UNCIV_LICENSE.txt`
-- `THIRD_PARTY_ZEMEROTH_LICENSE_MIT.txt`
-- `THIRD_PARTY_ZEMEROTH_LICENSE_APACHE.txt`
 - `THIRD_PARTY_STELLAR_LICENSE.txt`
