@@ -250,6 +250,13 @@ body {
   letter-spacing: .2px;
 }
 
+input[type="range"] {
+  width: 100%;
+  margin-bottom: 12px;
+  cursor: pointer;
+  accent-color: var(--stone-hi);
+}
+
 select {
   width: 100%;
   border: 1px solid #776845;
@@ -294,6 +301,7 @@ button[class*="action-"]::before {
 }
 
 .action-wallet::before { content: '◉'; }
+.action-mute::before { content: '🔊'; }
 .action-start::before { content: '▶'; }
 .action-end::before { content: '⏳'; }
 .action-produce::before { content: '⚙'; }
