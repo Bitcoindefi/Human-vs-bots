@@ -61,6 +61,22 @@
                     </div>
                 </details>
 
+                <details class="menu-group">
+                    <summary>Audio Settings</summary>
+                    <div class="group-body">
+                        <label class="field-label" for="volumeMaster">Master Volume</label>
+                        <input type="range" id="volumeMaster" min="0" max="1" step="0.01" value="0.7">
+
+                        <label class="field-label" for="volumeMusic">Music Volume</label>
+                        <input type="range" id="volumeMusic" min="0" max="1" step="0.01" value="0.4">
+
+                        <label class="field-label" for="volumeSFX">SFX Volume</label>
+                        <input type="range" id="volumeSFX" min="0" max="1" step="0.01" value="0.6">
+
+                        <button id="btnMute" class="action-mute">Mute Audio</button>
+                    </div>
+                </details>
+
                 <details class="menu-group" open>
                     <summary>Match Control</summary>
                     <div class="group-body">

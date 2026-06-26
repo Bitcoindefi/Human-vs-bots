@@ -1,5 +1,7 @@
 const canvas = document.getElementById('arena');
 const ctx = canvas.getContext('2d');
+import { audioManager } from './audio.js';
+
 const HEX_SIZE = 34;
 const SQRT3 = Math.sqrt(3);
 
@@ -39,6 +41,10 @@ const ui = {
   btnZoomIn: document.getElementById('btnZoomIn'),
   btnZoomOut: document.getElementById('btnZoomOut'),
   btnZoomReset: document.getElementById('btnZoomReset'),
+  volumeMaster: document.getElementById('volumeMaster'),
+  volumeMusic: document.getElementById('volumeMusic'),
+  volumeSFX: document.getElementById('volumeSFX'),
+  btnMute: document.getElementById('btnMute'),
   walletState: document.getElementById('walletState'),
   humansCount: document.getElementById('humansCount'),
   botsCount: document.getElementById('botsCount'),
@@ -385,6 +391,7 @@ function moveUnit(unit, q, r) {
   clearUnitPos(unit);
   placeUnit(unit, q, r);
   unit.acted = true;
+  audioManager.playSfx('move');
 }
 
 function getUnitById(id) {
@@ -485,6 +492,7 @@ function attack(attacker, defender) {
   const dmg = Math.max(6, Math.round(attacker.atk / terrainDef));
   defender.hp -= dmg;
   attacker.acted = true;
+  audioManager.playSfx('attack');
   log(`${attacker.kind.toUpperCase()} ${attacker.unitType} hits ${defender.kind.toUpperCase()} ${defender.unitType} for ${dmg}`);
   if (defender.hp <= 0) {
     removeUnit(defender);
@@ -670,6 +678,7 @@ function produceHumanUnit() {
   state.humans.push(unit);
   structure.acted = true;
   state.mapByKey[key(spawn.q, spawn.r)].owner = 'human';
+  audioManager.playSfx('produce');
   log(`${structure.type} produced ${unitType}`, 'ok');
   syncUi();
 }
@@ -694,6 +703,7 @@ function produceHumanAiUnit() {
     state.humans.push(unit);
     attempt.structure.acted = true;
     state.mapByKey[key(spawn.q, spawn.r)].owner = 'human';
+    audioManager.playSfx('produce');
     log(`LLM A produced ${attempt.unitType}`);
     return;
   }
@@ -716,6 +726,7 @@ function produceBotRobot(force = false) {
   state.bots.push(robot);
   core.acted = true;
   state.mapByKey[key(spawn.q, spawn.r)].owner = 'bot';
+  audioManager.playSfx('produce');
   log('Bot tech-core produced robot', 'warn');
 }
 
@@ -735,6 +746,7 @@ function handlePlayerCellClick(cell) {
     humanOnCell.selected = true;
     state.selectedUnitId = humanOnCell.id;
     state.captureMode = false;
+    audioManager.playSfx('click');
     log(`Selected human ${humanOnCell.unitType}`);
     syncUi();
     return;
@@ -851,6 +863,7 @@ function endPlayerTurn() {
   state.phase = 'player';
   state.turn += 1;
 
+  audioManager.playSfx('endTurn');
   const proof = buildProofSnapshot('turn');
   log(`Turn ${state.turn} closed. Proof: ${proof.proofInputHash.slice(0, 14)}...`, 'ok');
   syncUi();
@@ -858,6 +871,9 @@ function endPlayerTurn() {
 
 function finishMatch(result) {
   if (!state.inMatch) return;
+  const isVictory = result.includes('Win');
+  audioManager.playSfx(isVictory ? 'victory' : 'defeat');
+  audioManager.playMusic('menu');
   state.inMatch = false;
   state.captureMode = false;
   ui.resultBanner.textContent = result;
@@ -1088,6 +1104,7 @@ function resetArena() {
 }
 
 canvas.addEventListener('click', event => {
+  audioManager.init();
   const rect = canvas.getBoundingClientRect();
   const sx = (event.clientX - rect.left) * (canvas.width / rect.width);
   const sy = (event.clientY - rect.top) * (canvas.height / rect.height);
@@ -1133,6 +1150,7 @@ ui.buildingSelect.addEventListener('change', () => {
 });
 
 ui.btnConnect.addEventListener('click', async () => {
+  audioManager.init();
   const acc = await StellarGameService.connectWallet();
   state.connected = true;
   syncUi();
@@ -1165,6 +1183,7 @@ ui.btnStart.addEventListener('click', async () => {
   Object.values(state.structures.bot).forEach(structure => { structure.acted = false; });
 
   ui.resultBanner.classList.remove('show');
+  audioManager.playMusic('game');
   syncUi();
   log(`start_game sent: ${tx.txHash} • ${state.matchMode === 'llm-vs-llm' ? `${formatModelLabel(state.selectedHumanModel)} vs ${formatModelLabel(state.selectedAI)}` : `Human vs ${formatModelLabel(state.selectedAI)}`}`, 'ok');
 });
@@ -1236,6 +1255,8 @@ ui.btnEnd.addEventListener('click', async () => {
 ui.btnReset.addEventListener('click', resetArena);
 
 ui.btnTogglePanel.addEventListener('click', () => {
+  audioManager.init(); // Initialize audio context on first user interaction
+  audioManager.playMusic('menu');
   ui.panelDrawer.classList.toggle('open');
   ui.btnTogglePanel.textContent = ui.panelDrawer.classList.contains('open') ? '✕ Menu' : '☰ Menu';
 });
@@ -1243,6 +1264,20 @@ ui.btnTogglePanel.addEventListener('click', () => {
 ui.btnZoomIn.addEventListener('click', () => setZoom(state.camera.zoom + 0.1));
 ui.btnZoomOut.addEventListener('click', () => setZoom(state.camera.zoom - 0.1));
 ui.btnZoomReset.addEventListener('click', () => setZoom(1));
+
+ui.volumeMaster.addEventListener('input', (e) => audioManager.setVolume('master', e.target.value));
+ui.volumeMusic.addEventListener('input', (e) => audioManager.setVolume('music', e.target.value));
+ui.volumeSFX.addEventListener('input', (e) => audioManager.setVolume('sfx', e.target.value));
+ui.btnMute.addEventListener('click', () => {
+  const muted = audioManager.toggleMute();
+  ui.btnMute.textContent = muted ? 'Unmute Audio' : 'Mute Audio';
+  ui.btnMute.classList.toggle('active-turn', muted);
+});
+
+// Load saved volumes into UI
+ui.volumeMaster.value = audioManager.volumes.master;
+ui.volumeMusic.value = audioManager.volumes.music;
+ui.volumeSFX.value = audioManager.volumes.sfx;
 
 resetArena();
 setZoom(1);
