@@ -1,5 +1,7 @@
 # Human-vs-bots
 
+[![Godot Web build](https://github.com/Bitcoindefi/Human-vs-bots/actions/workflows/godot-build.yml/badge.svg)](https://github.com/Bitcoindefi/Human-vs-bots/actions/workflows/godot-build.yml)
+
 Turn-based strategy game with a Web3-ready flow on Stellar.
 
 ## What this project is
@@ -94,6 +96,23 @@ make godot-export
 The command detects `godot4` or `godot`, runs the `Web` export preset in headless
 mode, and writes the generated entry point to `dist/index.html`. The generated
 `dist/` directory is intentionally not tracked.
+
+Godot Web exports expose a defensive `WebBridge` autoload for asynchronous
+wallet, Stellar commit/reveal, and ZK proof operations. The browser function,
+callback, and payload contract is documented in
+[`godot/web/README.md`](godot/web/README.md).
+
+### Godot Web CI/CD
+
+The [Godot Web build workflow](.github/workflows/godot-build.yml) runs for every
+pull request and every push to `main`. Its `build` job installs and caches Godot
+4.7.0 plus the matching Web export templates, calls `make godot-export`, and
+uploads `dist/` as the GitHub Pages artifact.
+
+For pushes to `main`, the `deploy` job publishes that artifact to the
+`github-pages` environment with `actions/deploy-pages`. Pull requests build and
+upload the artifact for validation but never deploy it. The repository's Pages
+source must be set to **GitHub Actions** under **Settings → Pages**.
 
 ## Third-party references and licenses
 
