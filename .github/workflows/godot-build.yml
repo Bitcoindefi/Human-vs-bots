@@ -6,11 +6,10 @@ on:
       - main
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
   build:
+    permissions:
+      contents: read
     name: Build Godot Web export
     runs-on: ubuntu-latest
 
