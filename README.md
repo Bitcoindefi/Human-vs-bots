@@ -97,6 +97,11 @@ The command detects `godot4` or `godot`, runs the `Web` export preset in headles
 mode, and writes the generated entry point to `dist/index.html`. The generated
 `dist/` directory is intentionally not tracked.
 
+Godot Web exports expose a defensive `WebBridge` autoload for asynchronous
+wallet, Stellar commit/reveal, and ZK proof operations. The browser function,
+callback, and payload contract is documented in
+[`godot/web/README.md`](godot/web/README.md).
+
 ### Godot Web CI/CD
 
 The [Godot Web build workflow](.github/workflows/godot-build.yml) runs for every
