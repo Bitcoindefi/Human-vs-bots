@@ -72,6 +72,29 @@ The flow is aligned with Stellar hackathon architecture and is prepared for deep
 - `scripts/serve-civ-lite.sh`
 - `scripts/game-studio.sh`
 
+## Godot project
+
+The base Godot project lives in `godot/` and requires Godot 4.x.
+
+To open it, import `godot/project.godot` from the Godot Project Manager or run:
+
+```bash
+godot4 --editor --path godot
+```
+
+If your Godot 4 executable is named `godot`, use that command instead.
+
+Install the matching Godot export templates before exporting for the first time.
+Then export the Web build from the repository root:
+
+```bash
+make godot-export
+```
+
+The command detects `godot4` or `godot`, runs the `Web` export preset in headless
+mode, and writes the generated entry point to `dist/index.html`. The generated
+`dist/` directory is intentionally not tracked.
+
 ## Third-party references and licenses
 
 - Unciv assets inspiration (visual assets used in demo pipeline)

@@ -2,3 +2,12 @@
 .zemeroth/
 zemeroth-full/
 .vscode/
+
+# Godot editor cache and generated imports
+godot/.godot/
+godot/**/*.import
+
+# Godot web exports are generated with `make godot-export`.
+/dist/
+
+# godot/export_presets.cfg is intentionally tracked.
