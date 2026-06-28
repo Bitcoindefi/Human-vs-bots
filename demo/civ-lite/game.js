@@ -8,6 +8,9 @@ import { buildSpriteAtlas } from './sprites.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
+const ZOOM_MIN = 0.4, ZOOM_MAX = 3, ZOOM_SPEED = 0.08;
+const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
+const PAN_SPEED = 500;  // WASD px/sec (world units)
 const SIGHT = 2;
 const TERRAIN_TYPES = ['plains', 'forest', 'hill', 'water', 'desert'];
 const TERRAIN_YIELD = {
@@ -100,6 +103,7 @@ const S = {
   selected: null,
   fog: [],           // 0=unknown, 1=seen, 2=visible
   camX: 0, camY: 0,
+  zoom: 1, targetZoom: 1,
   nextId: 3,
   // Visual state
   particles: [],
@@ -220,12 +224,12 @@ function combat(attacker, defender) {
     attacker.hp -= Math.round(counterDmg);
     log(`Counter! ${attacker.type} takes ${Math.round(counterDmg)} dmg`, 'combat');
   }
-  spawnParticles(defender.x * TILE + TILE / 2 - S.camX, defender.y * TILE + TILE / 2 - S.camY, 12);
+  spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
   log(`${attacker.owner}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
   if (defender.hp <= 0) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
-    spawnParticles(defender.x * TILE + TILE / 2 - S.camX, defender.y * TILE + TILE / 2 - S.camY, 20);
+    spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
   if (attacker.hp <= 0) {
@@ -467,17 +471,34 @@ window.addEventListener('resize', resize);
 resize();
 
 // ─── Camera ─────────────────────────────────────────
+function viewW() { return canvas.width / S.zoom; }
+function viewH() { return canvas.height / S.zoom; }
+
 function centerOn(x, y) {
-  S.camX = x * TILE - canvas.width / 2 + TILE / 2;
-  S.camY = y * TILE - canvas.height / 2 + TILE / 2;
+  S.camX = x * TILE + TILE / 2 - viewW() / 2;
+  S.camY = y * TILE + TILE / 2 - viewH() / 2;
   clampCam();
 }
 
 function clampCam() {
-  const maxX = MAP_W * TILE - canvas.width;
-  const maxY = MAP_H * TILE - canvas.height;
+  const maxX = MAP_W * TILE - viewW();
+  const maxY = MAP_H * TILE - viewH();
   S.camX = Math.max(0, Math.min(maxX, S.camX));
   S.camY = Math.max(0, Math.min(maxY, S.camY));
+}
+
+function smoothZoom(newZoom, pivotScreenX, pivotScreenY) {
+  // pivotScreenX/Y are canvas-local coords
+  const oldZoom = S.zoom;
+  const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+  S.targetZoom = clamped;
+  S.zoom = clamped;
+  // Adjust camera so the world point under cursor stays fixed
+  const wx = pivotScreenX / oldZoom + S.camX;
+  const wy = pivotScreenY / oldZoom + S.camY;
+  S.camX = wx - pivotScreenX / S.zoom;
+  S.camY = wy - pivotScreenY / S.zoom;
+  clampCam();
 }
 
 centerOn(2, 2);
@@ -485,22 +506,22 @@ centerOn(2, 2);
 // ─── Rendering layers ───────────────────────────────
 // Layer 0: Terrain
 function drawLayerTerrain() {
+  const vw = viewW(), vh = viewH();
   const startX = Math.floor(S.camX / TILE);
   const startY = Math.floor(S.camY / TILE);
-  const endX = Math.min(MAP_W - 1, startX + Math.ceil(canvas.width / TILE) + 1);
-  const endY = Math.min(MAP_H - 1, startY + Math.ceil(canvas.height / TILE) + 1);
+  const endX = Math.min(MAP_W - 1, startX + Math.ceil(vw / TILE) + 1);
+  const endY = Math.min(MAP_H - 1, startY + Math.ceil(vh / TILE) + 1);
 
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
-      if (S.fog[y][x] === 0) continue; // completely unknown
+      if (S.fog[y][x] === 0) continue;
       const terrain = S.map[y][x];
       const variant = S.tileVariants[y][x];
       const sprite = ATLAS.terrain[terrain][variant];
-      const px = x * TILE - S.camX;
-      const py = y * TILE - S.camY;
+      const px = x * TILE;
+      const py = y * TILE;
       ctx.drawImage(sprite, px, py, TILE, TILE);
 
-      // Animated water shimmer
       if (terrain === 'water') {
         const shimmer = Math.sin(S.waterPhase + x * 0.7 + y * 0.5) * 0.08 + 0.04;
         ctx.fillStyle = `rgba(120,200,255,${shimmer})`;
@@ -512,17 +533,18 @@ function drawLayerTerrain() {
 
 // Layer 1: Grid overlay
 function drawLayerGrid() {
+  const vw = viewW(), vh = viewH();
   const startX = Math.floor(S.camX / TILE);
   const startY = Math.floor(S.camY / TILE);
-  const endX = Math.min(MAP_W - 1, startX + Math.ceil(canvas.width / TILE) + 1);
-  const endY = Math.min(MAP_H - 1, startY + Math.ceil(canvas.height / TILE) + 1);
+  const endX = Math.min(MAP_W - 1, startX + Math.ceil(vw / TILE) + 1);
+  const endY = Math.min(MAP_H - 1, startY + Math.ceil(vh / TILE) + 1);
 
   ctx.strokeStyle = 'rgba(200,220,255,0.06)';
-  ctx.lineWidth = 0.5;
+  ctx.lineWidth = 0.5 / S.zoom;  // constant screen-space thickness
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
       if (S.fog[y][x] === 0) continue;
-      ctx.strokeRect(x * TILE - S.camX, y * TILE - S.camY, TILE, TILE);
+      ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
     }
   }
 }
@@ -533,7 +555,7 @@ function drawLayerReachable() {
   ctx.fillStyle = 'rgba(90,200,250,0.12)';
   for (const key of S.reachable) {
     const [x, y] = key.split(',').map(Number);
-    ctx.fillRect(x * TILE - S.camX, y * TILE - S.camY, TILE, TILE);
+    ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
   }
 }
 
@@ -541,24 +563,23 @@ function drawLayerReachable() {
 function drawLayerPath() {
   if (S.path.length < 2) return;
   ctx.strokeStyle = 'rgba(90,250,150,0.5)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 2 / S.zoom;
+  ctx.setLineDash([4 / S.zoom, 4 / S.zoom]);
   ctx.beginPath();
   for (let i = 0; i < S.path.length; i++) {
-    const px = S.path[i].x * TILE + TILE / 2 - S.camX;
-    const py = S.path[i].y * TILE + TILE / 2 - S.camY;
+    const px = S.path[i].x * TILE + TILE / 2;
+    const py = S.path[i].y * TILE + TILE / 2;
     if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
   }
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Path dots
   ctx.fillStyle = 'rgba(90,250,150,0.6)';
   for (let i = 1; i < S.path.length; i++) {
-    const px = S.path[i].x * TILE + TILE / 2 - S.camX;
-    const py = S.path[i].y * TILE + TILE / 2 - S.camY;
+    const px = S.path[i].x * TILE + TILE / 2;
+    const py = S.path[i].y * TILE + TILE / 2;
     ctx.beginPath();
-    ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.arc(px, py, 3 / S.zoom, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -567,24 +588,22 @@ function drawLayerPath() {
 function drawLayerCities() {
   for (const city of S.cities) {
     if (S.fog[city.y][city.x] === 0) continue;
-    const px = city.x * TILE - S.camX + TILE / 2;
-    const py = city.y * TILE - S.camY + TILE / 2;
+    const px = city.x * TILE + TILE / 2;
+    const py = city.y * TILE + TILE / 2;
     const sprite = city.owner === 'player' ? ATLAS.cities.player : ATLAS.cities.bot;
     ctx.drawImage(sprite, px - 28, py - 28, 56, 56);
 
-    // City name label
-    ctx.font = 'bold 9px system-ui';
+    ctx.font = `bold ${9 / S.zoom}px system-ui`;
     ctx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff5555';
     ctx.textAlign = 'center';
     ctx.fillText(city.name, px, py + 28);
 
-    // Pop badge
     ctx.fillStyle = '#222';
     ctx.beginPath();
     ctx.arc(px + 18, py - 18, 7, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#ffd700';
-    ctx.font = 'bold 8px system-ui';
+    ctx.font = `bold ${8 / S.zoom}px system-ui`;
     ctx.fillText(city.pop, px + 18, py - 15);
   }
 }
@@ -598,8 +617,8 @@ function drawLayerUnits() {
     if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
 
     const sprite = unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
-    const px = unit.x * TILE - S.camX;
-    const py = unit.y * TILE - S.camY;
+    const px = unit.x * TILE;
+    const py = unit.y * TILE;
     ctx.drawImage(sprite, px, py, TILE, TILE);
 
     // HP bar
@@ -619,9 +638,9 @@ function drawLayerUnits() {
   // Animated unit
   if (S.animating) {
     const a = S.animating;
-    const ease = 1 - Math.pow(1 - a.t, 3); // ease-out cubic
-    const px = a.from.x + (a.to.x - a.from.x) * ease - S.camX;
-    const py = a.from.y + (a.to.y - a.from.y) * ease - S.camY;
+    const ease = 1 - Math.pow(1 - a.t, 3);
+    const px = a.from.x + (a.to.x - a.from.x) * ease;
+    const py = a.from.y + (a.to.y - a.from.y) * ease;
     const sprite = a.unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
     ctx.drawImage(sprite, px, py, TILE, TILE);
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, a.unit.hp / 100);
@@ -638,15 +657,16 @@ function drawHPBar(x, y, w, h, pct) {
 
 // Layer 6: Fog of war
 function drawLayerFog() {
+  const vw = viewW(), vh = viewH();
   const startX = Math.floor(S.camX / TILE);
   const startY = Math.floor(S.camY / TILE);
-  const endX = Math.min(MAP_W - 1, startX + Math.ceil(canvas.width / TILE) + 1);
-  const endY = Math.min(MAP_H - 1, startY + Math.ceil(canvas.height / TILE) + 1);
+  const endX = Math.min(MAP_W - 1, startX + Math.ceil(vw / TILE) + 1);
+  const endY = Math.min(MAP_H - 1, startY + Math.ceil(vh / TILE) + 1);
 
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
-      const px = x * TILE - S.camX;
-      const py = y * TILE - S.camY;
+      const px = x * TILE;
+      const py = y * TILE;
       if (S.fog[y][x] === 0) {
         ctx.drawImage(ATLAS.fog.unknown, px, py, TILE, TILE);
       } else if (S.fog[y][x] === 1) {
@@ -659,17 +679,17 @@ function drawLayerFog() {
 // Layer 7: Hover highlight
 function drawLayerHover() {
   if (S.hoverTile) {
-    const px = S.hoverTile.x * TILE - S.camX;
-    const py = S.hoverTile.y * TILE - S.camY;
+    const px = S.hoverTile.x * TILE;
+    const py = S.hoverTile.y * TILE;
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.5 / S.zoom;
     ctx.strokeRect(px + 1, py + 1, TILE - 2, TILE - 2);
   }
 
   // Selection ring
   if (S.selected) {
-    const px = S.selected.x * TILE - S.camX + TILE / 2;
-    const py = S.selected.y * TILE - S.camY + TILE / 2;
+    const px = S.selected.x * TILE + TILE / 2;
+    const py = S.selected.y * TILE + TILE / 2;
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(S.selectionPhase * 0.5);
@@ -678,7 +698,7 @@ function drawLayerHover() {
   }
 }
 
-// Layer 8: Particles
+// Layer 8: Particles (world coords, handled by zoom transform)
 function drawLayerParticles() {
   for (const p of S.particles) {
     const alpha = p.life / p.maxLife;
@@ -793,6 +813,18 @@ function hideTooltip() { tooltip.style.display = 'none'; }
 
 // ─── Input handling ─────────────────────────────────
 let dragStart = null, dragging = false;
+const keysDown = new Set();
+let lastMousePos = null;
+
+// Zoom with wheel — toward cursor
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  const newZoom = S.zoom * (1 - Math.sign(e.deltaY) * ZOOM_SPEED);
+  smoothZoom(newZoom, px, py);
+}, { passive: false });
 
 canvas.addEventListener('mousedown', e => {
   dragStart = { x: e.clientX, y: e.clientY, camX: S.camX, camY: S.camY };
@@ -801,22 +833,23 @@ canvas.addEventListener('mousedown', e => {
 
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
+  lastMousePos = { x: e.clientX, y: e.clientY };
 
-  // Drag panning
+  // Drag panning (account for zoom)
   if (dragStart) {
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragging = true;
     if (dragging) {
-      S.camX = dragStart.camX - dx;
-      S.camY = dragStart.camY - dy;
+      S.camX = dragStart.camX - dx / S.zoom;
+      S.camY = dragStart.camY - dy / S.zoom;
       clampCam();
     }
   }
 
-  // Hover
-  const mx = e.clientX - rect.left + S.camX;
-  const my = e.clientY - rect.top + S.camY;
+  // Hover (screen to world coords with zoom)
+  const mx = (e.clientX - rect.left) / S.zoom + S.camX;
+  const my = (e.clientY - rect.top) / S.zoom + S.camY;
   const tx = Math.floor(mx / TILE);
   const ty = Math.floor(my / TILE);
 
@@ -838,8 +871,8 @@ canvas.addEventListener('mousemove', e => {
 canvas.addEventListener('mouseup', e => {
   if (!dragging && S.phase === 'player') {
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left + S.camX;
-    const my = e.clientY - rect.top + S.camY;
+    const mx = (e.clientX - rect.left) / S.zoom + S.camX;
+    const my = (e.clientY - rect.top) / S.zoom + S.camY;
     const tx = Math.floor(mx / TILE);
     const ty = Math.floor(my / TILE);
     handleClick(tx, ty);
@@ -851,6 +884,7 @@ canvas.addEventListener('mouseup', e => {
 canvas.addEventListener('mouseleave', () => {
   hideTooltip();
   S.hoverTile = null;
+  lastMousePos = null;
 });
 
 // Minimap click
@@ -944,6 +978,8 @@ function handleClick(tx, ty) {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
+  keysDown.add(e.key.toLowerCase());
+
   if (e.key === 'e' || e.key === 'E') endPlayerTurn();
   if (e.key === 'c' || e.key === 'C') {
     const u = S.selected || S.units.find(u => u.owner === 'player');
@@ -955,6 +991,24 @@ document.addEventListener('keydown', e => {
     S.path = [];
     updateUnitPanel();
   }
+
+  // Space: cycle to next idle player unit (movLeft > 0)
+  if (e.key === ' ') {
+    e.preventDefault();
+    const idle = S.units.filter(u => u.owner === 'player' && u.movLeft > 0);
+    if (idle.length === 0) return;
+    const curIdx = S.selected ? idle.indexOf(S.selected) : -1;
+    const next = idle[(curIdx + 1) % idle.length];
+    S.selected = next;
+    S.reachable = calcReachable(next);
+    S.path = [];
+    updateUnitPanel();
+    centerOn(next.x, next.y);
+  }
+});
+
+document.addEventListener('keyup', e => {
+  keysDown.delete(e.key.toLowerCase());
 });
 
 // Buttons
@@ -979,7 +1033,10 @@ function gameLoop(now) {
   ctx.fillStyle = '#070b14';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Render all layers
+  // Render all layers with zoom transform
+  ctx.save();
+  ctx.scale(S.zoom, S.zoom);
+  ctx.translate(-S.camX, -S.camY);
   drawLayerTerrain();
   drawLayerGrid();
   drawLayerReachable();
@@ -989,9 +1046,41 @@ function gameLoop(now) {
   drawLayerFog();
   drawLayerHover();
   drawLayerParticles();
+  ctx.restore();
 
-  // Minimap
+  // Minimap (screen-space, no zoom)
   drawMinimap();
+
+  // Edge scrolling
+  if (S.phase === 'player' && lastMousePos) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = lastMousePos.x - rect.left;
+    const my = lastMousePos.y - rect.top;
+    let ex = 0, ey = 0;
+    if (mx < EDGE_SCROLL_ZONE) ex = -1;
+    else if (mx > canvas.width - EDGE_SCROLL_ZONE) ex = 1;
+    if (my < EDGE_SCROLL_ZONE) ey = -1;
+    else if (my > canvas.height - EDGE_SCROLL_ZONE) ey = 1;
+    if (ex || ey) {
+      S.camX += ex * EDGE_SCROLL_SPEED * dt / S.zoom;
+      S.camY += ey * EDGE_SCROLL_SPEED * dt / S.zoom;
+      clampCam();
+    }
+  }
+
+  // WASD panning
+  if (S.phase === 'player' && keysDown.size) {
+    let dx = 0, dy = 0;
+    if (keysDown.has('w') || keysDown.has('arrowup')) dy = -1;
+    if (keysDown.has('s') || keysDown.has('arrowdown')) dy = 1;
+    if (keysDown.has('a') || keysDown.has('arrowleft')) dx = -1;
+    if (keysDown.has('d') || keysDown.has('arrowright')) dx = 1;
+    if (dx || dy) {
+      S.camX += dx * PAN_SPEED * dt / S.zoom;
+      S.camY += dy * PAN_SPEED * dt / S.zoom;
+      clampCam();
+    }
+  }
 
   requestAnimationFrame(gameLoop);
 }
