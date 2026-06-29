@@ -995,7 +995,7 @@ function drawMinimap() {
   }
   for (const unit of S.units) {
     if (unit.owner !== 'player' && S.fog[unit.y][unit.x] < 2) continue;
-    miniCtx.fillStyle = unit.owner === 'player' ? '#5af0ff' : unit.owner === 'barbarian' ? '#d29922' : '#ff6666';
+    miniCtx.fillStyle = minimapUnitColor(unit.owner);
     miniCtx.beginPath();
     miniCtx.arc(unit.x * tw + tw / 2, unit.y * th + th / 2, Math.max(tw, th) * 0.6, 0, Math.PI * 2);
     miniCtx.fill();
@@ -1010,6 +1010,12 @@ function drawMinimap() {
     (canvas.width / (MAP_W * TILE)) * mw,
     (canvas.height / (MAP_H * TILE)) * mh
   );
+}
+
+function minimapUnitColor(owner) {
+  if (owner === 'player') return '#5af0ff';
+  if (owner === 'barbarian') return '#d29922';
+  return '#ff6666';
 }
 
 // ─── Unit info panel ────────────────────────────────
@@ -1048,14 +1054,18 @@ function showTooltip(x, y, tileX, tileY) {
   const yields = TERRAIN_YIELD[terrain];
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
   const camp = findActiveCampAt(tileX, tileY);
+  const defenseText = def ? ` (+${def}% def)` : '';
+  const campText = camp
+    ? `<div class="tt-camp">${camp.name}: clear for +4 prod, +2 science</div>`
+    : '';
   tooltip.innerHTML = `
-    <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
+    <div class="tt-title">${terrain}${defenseText}</div>
     <div class="tt-yields">
       <span>🌾${yields.food}</span>
       <span>⚒️${yields.prod}</span>
       <span>🔬${yields.sci}</span>
     </div>
-    ${camp ? `<div class="tt-camp">${camp.name}: clear for +4 prod, +2 science</div>` : ''}`;
+    ${campText}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';

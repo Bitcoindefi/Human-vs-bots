@@ -32,9 +32,8 @@ const EVENT_TABLE = [
 
 function hashSeed(seed) {
   let hash = 2166136261;
-  const text = String(seed);
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
+  for (const char of String(seed)) {
+    hash ^= char.codePointAt(0);
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -75,8 +74,9 @@ export function planBarbarianCamps({
     }
   }
 
-  return candidates
-    .sort((a, b) => a.score - b.score)
+  const sortedCandidates = candidates.sort((a, b) => a.score - b.score);
+
+  return sortedCandidates
     .slice(0, count)
     .map((tile, index) => ({
       id: `camp-${index + 1}`,
