@@ -30,14 +30,14 @@ export const CITY_BUILDINGS = {
 };
 
 export function createCity(city) {
+  const { buildings = [], ...rest } = city;
   return {
     food: 0,
     prod: 0,
     pop: 1,
-    buildings: [],
     amenities: 0,
-    ...city,
-    buildings: [...(city.buildings || [])],
+    ...rest,
+    buildings: [...buildings],
   };
 }
 
@@ -102,7 +102,7 @@ function getWorkedTiles(city, map, terrainYield) {
 }
 
 function getTile(x, y, map, terrainYield) {
-  if (!map[y] || !map[y][x]) return null;
+  if (!map[y]?.[x]) return null;
   const terrain = map[y][x];
   return { x, y, terrain, yields: { ...terrainYield[terrain] } };
 }

@@ -811,7 +811,12 @@ function updateCityPanel() {
   }
   const playerCityCount = S.cities.filter(c => c.owner === 'player').length;
   const economy = calculateCityEconomy(city, S.map, TERRAIN_YIELD, playerCityCount);
-  const happinessClass = economy.happiness >= 1 ? 'happy-good' : economy.happiness === 0 ? 'happy-neutral' : 'happy-bad';
+  let happinessClass = 'happy-bad';
+  if (economy.happiness >= 1) {
+    happinessClass = 'happy-good';
+  } else if (economy.happiness === 0) {
+    happinessClass = 'happy-neutral';
+  }
   const built = city.buildings.length ? city.buildings.map(key => CITY_BUILDINGS[key]?.name || key).join(', ') : 'None';
   const workedTiles = economy.workedTiles
     .map(tile => `${tile.terrain} (${tile.yields.food}/${tile.yields.prod}/${tile.yields.sci})`)
@@ -862,14 +867,16 @@ function showTooltip(x, y, tileX, tileY) {
     .filter(c => c.owner === 'player')
     .find(c => calculateCityEconomy(c, S.map, TERRAIN_YIELD, S.cities.filter(city => city.owner === c.owner).length)
       .workedTiles.some(tile => tile.x === tileX && tile.y === tileY));
+  const defenseLabel = def ? ` (+${def}% def)` : '';
+  const workedLabel = workedBy ? `<div class="tt-worked">Worked by ${workedBy.name}</div>` : '';
   tooltip.innerHTML = `
-    <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
+    <div class="tt-title">${terrain}${defenseLabel}</div>
     <div class="tt-yields">
       <span>🌾${yields.food}</span>
       <span>⚒️${yields.prod}</span>
       <span>🔬${yields.sci}</span>
     </div>
-    ${workedBy ? `<div class="tt-worked">Worked by ${workedBy.name}</div>` : ''}`;
+    ${workedLabel}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';
