@@ -299,6 +299,29 @@ button:active {
   gap: 2px;
 }
 
+#tooltip .tt-combat {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(139,148,158,0.28);
+  display: grid;
+  gap: 3px;
+}
+
+#tooltip .tt-combat strong {
+  color: var(--gold);
+  font-size: 0.72rem;
+}
+
+#tooltip .tt-combat span {
+  color: var(--text);
+  line-height: 1.35;
+}
+
+#tooltip .tt-combat small {
+  color: var(--dim);
+  line-height: 1.3;
+}
+
 /* ───── Scrollbar ────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
