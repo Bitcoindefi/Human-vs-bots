@@ -4,6 +4,7 @@
    Inspired by Freeciv-web layers, C7 terrain system,
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
+import { AUDIO_EVENTS, createAudioSystem } from './audio-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 
 // ─── Constants ──────────────────────────────────────
@@ -37,7 +38,15 @@ const dom = {
   science: document.getElementById('science'),
   unitDet: document.getElementById('unitDetails'),
   logBox:  document.getElementById('logContent'),
+  audioState: document.getElementById('audioState'),
+  audioTheme: document.getElementById('audioTheme'),
+  btnMute: document.getElementById('btnMute'),
+  masterVolume: document.getElementById('masterVolume'),
+  musicVolume: document.getElementById('musicVolume'),
+  sfxVolume: document.getElementById('sfxVolume'),
 };
+
+const audio = createAudioSystem({ onSettingsChange: renderAudioSettings });
 
 // ─── Build sprite atlas (async) ─────────────────────
 let ATLAS = null;
@@ -50,6 +59,66 @@ function log(msg, cls = '') {
   dom.logBox.prepend(d);
   while (dom.logBox.children.length > 60) dom.logBox.lastChild.remove();
 }
+
+// ─── Audio controls ─────────────────────────────────
+function volumeToInput(value) {
+  return String(Math.round(value * 100));
+}
+
+function renderAudioSettings(settings = audio.getSettings()) {
+  if (!dom.btnMute) return;
+  dom.btnMute.textContent = settings.muted ? 'Unmute' : 'Mute';
+  dom.btnMute.setAttribute('aria-pressed', String(settings.muted));
+  dom.masterVolume.value = volumeToInput(settings.masterVolume);
+  dom.musicVolume.value = volumeToInput(settings.musicVolume);
+  dom.sfxVolume.value = volumeToInput(settings.sfxVolume);
+  dom.audioTheme.value = audio.getMusicTheme();
+
+  if (settings.muted) dom.audioState.textContent = 'Muted';
+  else if (!settings.musicEnabled) dom.audioState.textContent = 'SFX only';
+  else if (audio.isUnlocked()) dom.audioState.textContent = 'Playing';
+  else dom.audioState.textContent = 'Ready';
+}
+
+function playAudioEvent(eventName) {
+  if (audio.playEvent(eventName)) return;
+  audio.unlock(audio.getMusicTheme())
+    .then(ok => {
+      if (ok) audio.playEvent(eventName);
+      renderAudioSettings();
+    })
+    .catch(() => {
+      if (dom.audioState) dom.audioState.textContent = 'Blocked';
+    });
+}
+
+function bindAudioControls() {
+  if (!dom.btnMute) return;
+  audio.setMusicTheme('game');
+  renderAudioSettings();
+
+  dom.btnMute.addEventListener('click', () => {
+    audio.setMuted(!audio.getSettings().muted);
+    playAudioEvent(AUDIO_EVENTS.click);
+  });
+  dom.audioTheme.addEventListener('change', () => {
+    audio.setMusicTheme(dom.audioTheme.value);
+    playAudioEvent(AUDIO_EVENTS.click);
+    renderAudioSettings();
+  });
+
+  const bindVolume = (input, key) => {
+    input.addEventListener('input', () => {
+      audio.updateSettings({ [key]: Number(input.value) / 100 });
+      playAudioEvent(AUDIO_EVENTS.click);
+    });
+  };
+  bindVolume(dom.masterVolume, 'masterVolume');
+  bindVolume(dom.musicVolume, 'musicVolume');
+  bindVolume(dom.sfxVolume, 'sfxVolume');
+}
+
+bindAudioControls();
 
 // ─── Seeded RNG for tile variants ───────────────────
 function hashTile(x, y) { return ((x * 374761393 + y * 668265263) ^ 1274126177) >>> 0; }
@@ -214,6 +283,7 @@ function calcReachable(unit) {
 
 // ─── Combat ─────────────────────────────────────────
 function combat(attacker, defender) {
+  playAudioEvent(AUDIO_EVENTS.attack);
   const defTerrain = S.map[defender.y][defender.x];
   const defBonus = TERRAIN_DEFENSE[defTerrain] || 0;
   const dmg = Math.max(5, attacker.atk - defender.def * (1 + defBonus) * 0.5 + Math.random() * 10);
@@ -248,11 +318,13 @@ function checkWin() {
     S.phase = 'gameover';
     dom.status.textContent = '🎉 Victory!';
     dom.status.className = 'status-win';
+    playAudioEvent(AUDIO_EVENTS.victory);
     log('*** VICTORY! ***', 'build');
   } else if (playerUnits.length === 0 && playerCities.length === 0) {
     S.phase = 'gameover';
     dom.status.textContent = '💀 Defeat';
     dom.status.className = 'status-lose';
+    playAudioEvent(AUDIO_EVENTS.defeat);
     log('*** DEFEAT ***', 'combat');
   }
 }
@@ -306,6 +378,7 @@ function gatherResources(owner) {
     if (city.food >= 8 * city.pop) {
       city.pop++;
       city.food = 0;
+      if (owner === 'player') playAudioEvent(AUDIO_EVENTS.build);
       log(`${city.name} grows to pop ${city.pop}!`, 'build');
     }
     // Auto-recruit
@@ -323,6 +396,7 @@ function gatherResources(owner) {
         }
       }
       S.units.push({ id, owner, x: spawnX, y: spawnY, hp: 100, atk: 28, def: 15, mov: 2, movLeft: 2, type: 'warrior' });
+      if (owner === 'player') playAudioEvent(AUDIO_EVENTS.build);
       log(`${city.name} trained a warrior!`, 'build');
       if (owner === 'player') revealAround(spawnX, spawnY);
     }
@@ -333,6 +407,7 @@ function gatherResources(owner) {
 // ─── Turn management ────────────────────────────────
 function endPlayerTurn() {
   if (S.phase !== 'player') return;
+  playAudioEvent(AUDIO_EVENTS.endTurn);
   S.phase = 'bot';
   S.selected = null;
   S.reachable.clear();
@@ -889,6 +964,7 @@ canvas.addEventListener('mouseleave', () => {
 
 // Minimap click
 miniC.addEventListener('click', e => {
+  playAudioEvent(AUDIO_EVENTS.click);
   const rect = miniC.getBoundingClientRect();
   const mx = (e.clientX - rect.left) / rect.width;
   const my = (e.clientY - rect.top) / rect.height;
@@ -903,6 +979,7 @@ function handleClick(tx, ty) {
   // Select own unit
   const myUnit = S.units.find(u => u.owner === 'player' && u.x === tx && u.y === ty);
   if (myUnit) {
+    playAudioEvent(AUDIO_EVENTS.select);
     S.selected = myUnit;
     S.reachable = calcReachable(myUnit);
     S.path = [];
@@ -962,6 +1039,7 @@ function handleClick(tx, ty) {
         const walkPath = path.slice(0, stepsCanTake + 1);
         const finalMovLeft = movLeft;
         const sel = S.selected;
+        playAudioEvent(AUDIO_EVENTS.move);
         animateMove(sel, walkPath, () => {
           sel.movLeft = finalMovLeft;
           S.reachable = calcReachable(sel);
@@ -969,7 +1047,12 @@ function handleClick(tx, ty) {
           refreshVision();
           // City capture
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
-          if (cap) { cap.owner = 'player'; log(`Captured ${cap.name}!`, 'build'); checkWin(); }
+          if (cap) {
+            cap.owner = 'player';
+            playAudioEvent(AUDIO_EVENTS.build);
+            log(`Captured ${cap.name}!`, 'build');
+            checkWin();
+          }
         });
       }
     }
@@ -983,9 +1066,13 @@ document.addEventListener('keydown', e => {
   if (e.key === 'e' || e.key === 'E') endPlayerTurn();
   if (e.key === 'c' || e.key === 'C') {
     const u = S.selected || S.units.find(u => u.owner === 'player');
-    if (u) centerOn(u.x, u.y);
+    if (u) {
+      playAudioEvent(AUDIO_EVENTS.click);
+      centerOn(u.x, u.y);
+    }
   }
   if (e.key === 'Escape') {
+    playAudioEvent(AUDIO_EVENTS.click);
     S.selected = null;
     S.reachable.clear();
     S.path = [];
@@ -999,6 +1086,7 @@ document.addEventListener('keydown', e => {
     if (idle.length === 0) return;
     const curIdx = S.selected ? idle.indexOf(S.selected) : -1;
     const next = idle[(curIdx + 1) % idle.length];
+    playAudioEvent(AUDIO_EVENTS.select);
     S.selected = next;
     S.reachable = calcReachable(next);
     S.path = [];
@@ -1015,7 +1103,10 @@ document.addEventListener('keyup', e => {
 document.getElementById('btnEndTurn').addEventListener('click', endPlayerTurn);
 document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
-  if (u) centerOn(u.x, u.y);
+  if (u) {
+    playAudioEvent(AUDIO_EVENTS.click);
+    centerOn(u.x, u.y);
+  }
 });
 
 // ─── Main loop ──────────────────────────────────────

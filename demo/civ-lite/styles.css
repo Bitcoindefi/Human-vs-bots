@@ -227,6 +227,64 @@ button:active {
   box-shadow: 0 0 8px rgba(63,185,80,0.2);
 }
 
+/* ───── Audio controls ───────────────────────────── */
+#audioPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.audio-row {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--dim);
+}
+
+.audio-row label {
+  min-width: 0;
+}
+
+.audio-row select {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+.audio-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.audio-actions {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+#btnMute {
+  padding: 6px 10px;
+}
+
+#btnMute[aria-pressed="true"] {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+#audioState {
+  min-width: 0;
+  color: var(--dim);
+  font-size: 0.72rem;
+  text-align: right;
+}
+
 /* ───── Minimap ──────────────────────────────────── */
 #minimapBox { padding: 10px 14px; }
 
