@@ -1,0 +1,31 @@
+name: Godot HTML5 Build
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: chickensoft-games/setup-godot@v1
+        with:
+          version: 4.3.0
+          use-dotnet: false
+      - run: godot --version
+      - run: |
+          cd godot
+          godot --headless --import
+          godot --headless --export-release "Web" ../dist/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: human-vs-bots-html5
+          path: dist/
+      - uses: peaceiris/actions-gh-pages@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist

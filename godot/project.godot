@@ -1,25 +1,27 @@
-; Engine configuration file.
-; Edit this file through the Godot editor when possible.
-;
-; Format:
-;   [section]
-;   param=value
-
-config_version=5
-
 [application]
+config/name="Human vs Bots"
+config/description="Hexagonal strategy game with Web3/ZK integration"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Mobile")
 
-config/name="HumanVsBots"
-run/main_scene="res://scenes/Main.tscn"
+[autoload]
+GameState="*res://src/autoload/GameState.gd"
+TurnManager="*res://src/autoload/TurnManager.gd"
+EconomyManager="*res://src/autoload/EconomyManager.gd"
+EventBus="*res://src/autoload/EventBus.gd"
+Web3Bridge="*res://src/autoload/Web3Bridge.gd"
+AudioManager="*res://src/autoload/AudioManager.gd"
 
 [display]
-
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
-[rendering]
-
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
-renderer/rendering_method.web="gl_compatibility"
+[input]
+zoom_in={"deadzone":0.5,"events":[Object(InputEventMouseButton,"button_index":4)]}
+zoom_out={"deadzone":0.5,"events":[Object(InputEventMouseButton,"button_index":5)]}
+pan_map={"deadzone":0.5,"events":[Object(InputEventMouseButton,"button_index":3)]}
+select_unit={"deadzone":0.5,"events":[Object(InputEventMouseButton,"button_index":1)]}
+toggle_conquer={"deadzone":0.5,"events":[Object(InputEventKey,"keycode":67)]}
+end_turn={"deadzone":0.5,"events":[Object(InputEventKey,"keycode":32)]}
