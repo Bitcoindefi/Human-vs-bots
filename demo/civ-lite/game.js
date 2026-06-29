@@ -5,6 +5,14 @@
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  applyEventChoice,
+  buildRandomEvent,
+  createBarbarianUnit,
+  formatEventEffects,
+  planBarbarianCamps,
+  shouldSpawnFromCamp,
+} from './barbarian-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -21,6 +29,7 @@ const TERRAIN_YIELD = {
   desert: { food: 0, prod: 1, sci: 1 },
 };
 const TERRAIN_DEFENSE = { plains: 0, forest: 0.25, hill: 0.35, water: 0, desert: 0 };
+const GAME_SEED = 'civ-lite-barbarian-events-21';
 
 // ─── DOM refs ───────────────────────────────────────
 const canvas  = document.getElementById('gameCanvas');
@@ -36,6 +45,7 @@ const dom = {
   prod:    document.getElementById('prod'),
   science: document.getElementById('science'),
   unitDet: document.getElementById('unitDetails'),
+  eventPanel: document.getElementById('eventPanel'),
   logBox:  document.getElementById('logContent'),
 };
 
@@ -98,6 +108,10 @@ const S = {
     { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
     { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1 },
   ],
+  camps: [],
+  pendingEvent: null,
+  eventHistory: new Set(),
+  empire: { food: 0, prod: 0, science: 0 },
   turn: 1,
   phase: 'player',  // player | bot | animating | gameover
   selected: null,
@@ -126,6 +140,55 @@ for (let y = 0; y < MAP_H; y++) {
   }
 }
 
+function updateEmpireHud() {
+  dom.food.textContent = Math.max(0, S.empire.food);
+  dom.prod.textContent = Math.max(0, S.empire.prod);
+  dom.science.textContent = Math.max(0, S.empire.science);
+}
+
+function isHostileTo(unit, other) {
+  if (!unit || !other) return false;
+  if (unit.owner === other.owner) return false;
+  if (unit.owner === 'barbarian' || other.owner === 'barbarian') return true;
+  return unit.owner === 'player' || other.owner === 'player';
+}
+
+function findUnitAt(x, y, predicate = () => true) {
+  return S.units.find(u => u.x === x && u.y === y && predicate(u));
+}
+
+function findActiveCampAt(x, y) {
+  return S.camps.find(camp => !camp.cleared && camp.x === x && camp.y === y);
+}
+
+function clearCampIfPresent(x, y, attacker) {
+  const camp = findActiveCampAt(x, y);
+  if (!camp) return;
+
+  camp.cleared = true;
+  if (attacker.owner === 'player') {
+    S.empire.prod += 4;
+    S.empire.science += 2;
+    updateEmpireHud();
+    log(`${camp.name} cleared: +4 prod, +2 science`, 'build');
+  } else if (attacker.owner === 'bot') {
+    log(`Bot cleared ${camp.name}.`, 'combat');
+  }
+}
+
+function initializeNeutralCamps() {
+  S.camps = planBarbarianCamps({
+    map: S.map,
+    seed: GAME_SEED,
+    count: 3,
+    safeZones: S.cities.map(city => ({ x: city.x, y: city.y })),
+  });
+
+  for (const camp of S.camps) {
+    S.units.push(createBarbarianUnit(camp, S.nextId++, S.turn));
+  }
+}
+
 // ─── Fog helpers ────────────────────────────────────
 function revealAround(x, y, r = SIGHT) {
   for (let dy = -r; dy <= r; dy++)
@@ -147,6 +210,7 @@ function refreshVision() {
   S.cities.filter(c => c.owner === 'player').forEach(c => revealAround(c.x, c.y));
 }
 
+initializeNeutralCamps();
 refreshVision();
 
 // ─── Pathfinding (A*) ───────────────────────────────
@@ -229,6 +293,7 @@ function combat(attacker, defender) {
   if (defender.hp <= 0) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
+    if (defender.owner === 'barbarian') clearCampIfPresent(defender.x, defender.y, attacker);
     spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
@@ -330,6 +395,63 @@ function gatherResources(owner) {
   return { food: totalFood, prod: totalProd, sci: totalSci };
 }
 
+function renderEventPanel() {
+  if (!dom.eventPanel) return;
+  const event = S.pendingEvent;
+  if (!event) {
+    dom.eventPanel.innerHTML = '<p class="placeholder">No active event</p>';
+    return;
+  }
+
+  dom.eventPanel.innerHTML = `
+    <div class="event-title">${event.title}</div>
+    <p>${event.description}</p>
+    <div class="event-actions">
+      ${event.choices.map(choice => `
+        <button class="event-choice" data-choice="${choice.id}">
+          ${choice.label}
+          <small>${formatEventEffects(choice.effects)}</small>
+        </button>`).join('')}
+    </div>`;
+}
+
+function maybeQueueRandomEvent() {
+  if (S.pendingEvent) return;
+  if (S.eventHistory.has(S.turn)) return;
+  const event = buildRandomEvent({ seed: GAME_SEED, turn: S.turn });
+  if (!event) return;
+
+  S.pendingEvent = event;
+  S.eventHistory.add(S.turn);
+  log(`Event: ${event.title}`, 'event');
+  renderEventPanel();
+}
+
+function resolveEventChoice(choiceId) {
+  if (!S.pendingEvent) return;
+  const city = S.cities.find(c => c.owner === 'player');
+  const current = {
+    ...S.empire,
+    cityFood: city?.food ?? 0,
+    cityProd: city?.prod ?? 0,
+  };
+  const next = applyEventChoice(current, S.pendingEvent, choiceId);
+
+  S.empire.food = Math.max(0, next.food ?? 0);
+  S.empire.prod = Math.max(0, next.prod ?? 0);
+  S.empire.science = Math.max(0, next.science ?? 0);
+  if (city) {
+    city.food = Math.max(0, next.cityFood ?? city.food);
+    city.prod = Math.max(0, next.cityProd ?? city.prod);
+  }
+
+  const choice = S.pendingEvent.choices.find(item => item.id === choiceId);
+  log(`${S.pendingEvent.title}: ${choice?.label ?? 'resolved'}`, 'event');
+  S.pendingEvent = null;
+  updateEmpireHud();
+  renderEventPanel();
+}
+
 // ─── Turn management ────────────────────────────────
 function endPlayerTurn() {
   if (S.phase !== 'player') return;
@@ -342,9 +464,10 @@ function endPlayerTurn() {
   updateUnitPanel();
 
   const res = gatherResources('player');
-  dom.food.textContent = res.food;
-  dom.prod.textContent = res.prod;
-  dom.science.textContent = res.sci;
+  S.empire.food += res.food;
+  S.empire.prod += res.prod;
+  S.empire.science += res.sci;
+  updateEmpireHud();
 
   setTimeout(botTurn, 400);
 }
@@ -358,6 +481,8 @@ function startPlayerTurn() {
   S.units.filter(u => u.owner === 'player').forEach(u => { u.movLeft = u.mov; });
   refreshVision();
   log(`─── Turn ${S.turn} ───`);
+  maybeQueueRandomEvent();
+  renderEventPanel();
 }
 
 // ─── Bot AI ─────────────────────────────────────────
@@ -380,7 +505,7 @@ function botTurn() {
     if (!bestTarget) continue;
 
     // Check if adjacent to a player unit (attack)
-    const adj = S.units.find(u => u.owner === 'player' &&
+    const adj = S.units.find(u => isHostileTo(bot, u) &&
       Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y) === 1);
     if (adj) {
       combat(bot, adj);
@@ -400,8 +525,9 @@ function botTurn() {
         if (cost > movLeft) break;
         // Check blocking
         if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== bot)) {
-          if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player')) {
-            combat(bot, S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player'));
+          const blocker = S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== bot);
+          if (blocker && isHostileTo(bot, blocker)) {
+            combat(bot, blocker);
             movLeft = 0;
           }
           break;
@@ -418,7 +544,83 @@ function botTurn() {
     }
   }
 
+  if (S.phase !== 'gameover') barbarianTurn();
   if (S.phase !== 'gameover') startPlayerTurn();
+}
+
+function spawnFromCamps() {
+  for (const camp of S.camps) {
+    if (!shouldSpawnFromCamp(camp, S.turn)) continue;
+    if (findUnitAt(camp.x, camp.y, unit => unit.owner === 'barbarian')) continue;
+
+    const unit = createBarbarianUnit(camp, S.nextId++, S.turn);
+    S.units.push(unit);
+    camp.lastSpawnTurn = S.turn;
+    log(`${camp.name} sends out a raider.`, 'event');
+  }
+}
+
+function findNearestBarbarianTarget(unit) {
+  const targets = [
+    ...S.units
+      .filter(other => isHostileTo(unit, other))
+      .map(other => ({ x: other.x, y: other.y, kind: 'unit', ref: other })),
+    ...S.cities
+      .filter(city => city.owner !== 'barbarian')
+      .map(city => ({ x: city.x, y: city.y, kind: 'city', ref: city })),
+  ];
+
+  let best = null;
+  let bestDist = Infinity;
+  for (const target of targets) {
+    const d = Math.abs(unit.x - target.x) + Math.abs(unit.y - target.y);
+    if (d < bestDist) {
+      best = target;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+function raidCity(unit, city) {
+  if (unit.owner !== 'barbarian') return;
+  city.food = Math.max(0, city.food - 3);
+  city.prod = Math.max(0, city.prod - 3);
+  log(`Barbarians raid ${city.name}, burning stored food and production.`, 'event');
+}
+
+function barbarianTurn() {
+  spawnFromCamps();
+  const raiders = S.units.filter(u => u.owner === 'barbarian');
+
+  for (const raider of raiders) {
+    raider.movLeft = raider.mov;
+    const adjacent = S.units.find(unit => isHostileTo(raider, unit) &&
+      Math.abs(unit.x - raider.x) + Math.abs(unit.y - raider.y) === 1);
+    if (adjacent) {
+      combat(raider, adjacent);
+      raider.movLeft = 0;
+      continue;
+    }
+
+    const target = findNearestBarbarianTarget(raider);
+    if (!target) continue;
+
+    const path = findPath(raider.x, raider.y, target.x, target.y);
+    if (path.length > 1) {
+      const next = path[1];
+      const blocker = findUnitAt(next.x, next.y, unit => unit !== raider);
+      if (blocker && isHostileTo(raider, blocker)) {
+        combat(raider, blocker);
+      } else if (!blocker) {
+        raider.x = next.x;
+        raider.y = next.y;
+      }
+    }
+
+    const city = S.cities.find(c => c.x === raider.x && c.y === raider.y);
+    if (city) raidCity(raider, city);
+  }
 }
 
 // ─── Animation helper ───────────────────────────────
@@ -608,18 +810,61 @@ function drawLayerCities() {
   }
 }
 
+// Layer 4.5: Barbarian camps
+function drawLayerCamps() {
+  for (const camp of S.camps) {
+    if (camp.cleared || S.fog[camp.y][camp.x] === 0) continue;
+    const px = camp.x * TILE + TILE / 2;
+    const py = camp.y * TILE + TILE / 2;
+
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.fillStyle = 'rgba(210,153,34,0.25)';
+    ctx.beginPath();
+    ctx.arc(0, 0, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#8f4f24';
+    ctx.beginPath();
+    ctx.moveTo(-16, 13);
+    ctx.lineTo(0, -16);
+    ctx.lineTo(16, 13);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 2 / S.zoom;
+    ctx.stroke();
+
+    ctx.fillStyle = '#1b0f08';
+    ctx.fillRect(-5, 2, 10, 11);
+    ctx.restore();
+  }
+}
+
 // Layer 5: Units
 function drawLayerUnits() {
   for (const unit of S.units) {
     // Skip animated unit at its stored position
     if (S.animating && S.animating.unit === unit) continue;
     if (S.fog[unit.y][unit.x] === 0) continue;
-    if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
+    if (unit.owner !== 'player' && S.fog[unit.y][unit.x] < 2) continue;
 
     const sprite = unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
     const px = unit.x * TILE;
     const py = unit.y * TILE;
     ctx.drawImage(sprite, px, py, TILE, TILE);
+
+    if (unit.owner === 'barbarian') {
+      ctx.strokeStyle = '#d29922';
+      ctx.lineWidth = 2 / S.zoom;
+      ctx.beginPath();
+      ctx.arc(px + TILE / 2, py + TILE / 2, 17, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ffd166';
+      ctx.font = `bold ${9 / S.zoom}px system-ui`;
+      ctx.textAlign = 'center';
+      ctx.fillText('B', px + TILE / 2, py + 9);
+    }
 
     // HP bar
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, unit.hp / 100);
@@ -739,13 +984,18 @@ function drawMinimap() {
   }
 
   // Units & cities on minimap
+  for (const camp of S.camps) {
+    if (camp.cleared || S.fog[camp.y][camp.x] === 0) continue;
+    miniCtx.fillStyle = '#d29922';
+    miniCtx.fillRect(camp.x * tw, camp.y * th, tw * 1.5, th * 1.5);
+  }
   for (const city of S.cities) {
     miniCtx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff4444';
     miniCtx.fillRect(city.x * tw, city.y * th, tw * 2, th * 2);
   }
   for (const unit of S.units) {
-    if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
-    miniCtx.fillStyle = unit.owner === 'player' ? '#5af0ff' : '#ff6666';
+    if (unit.owner !== 'player' && S.fog[unit.y][unit.x] < 2) continue;
+    miniCtx.fillStyle = unit.owner === 'player' ? '#5af0ff' : unit.owner === 'barbarian' ? '#d29922' : '#ff6666';
     miniCtx.beginPath();
     miniCtx.arc(unit.x * tw + tw / 2, unit.y * th + th / 2, Math.max(tw, th) * 0.6, 0, Math.PI * 2);
     miniCtx.fill();
@@ -797,13 +1047,15 @@ function showTooltip(x, y, tileX, tileY) {
   const terrain = S.map[tileY][tileX];
   const yields = TERRAIN_YIELD[terrain];
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const camp = findActiveCampAt(tileX, tileY);
   tooltip.innerHTML = `
     <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
     <div class="tt-yields">
       <span>🌾${yields.food}</span>
       <span>⚒️${yields.prod}</span>
       <span>🔬${yields.sci}</span>
-    </div>`;
+    </div>
+    ${camp ? `<div class="tt-camp">${camp.name}: clear for +4 prod, +2 science</div>` : ''}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';
@@ -912,7 +1164,7 @@ function handleClick(tx, ty) {
 
   // Move / attack with selected unit
   if (S.selected && S.selected.movLeft > 0) {
-    const enemy = S.units.find(u => u.owner === 'bot' && u.x === tx && u.y === ty);
+    const enemy = S.units.find(u => isHostileTo(S.selected, u) && u.x === tx && u.y === ty);
     if (enemy && Math.abs(enemy.x - S.selected.x) + Math.abs(enemy.y - S.selected.y) === 1) {
       combat(S.selected, enemy);
       S.selected.movLeft = 0;
@@ -933,7 +1185,7 @@ function handleClick(tx, ty) {
         if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== S.selected)) {
           // If enemy, attack
           const blocker = S.units.find(u => u.x === path[i].x && u.y === path[i].y);
-          if (blocker && blocker.owner === 'bot') {
+          if (blocker && isHostileTo(S.selected, blocker)) {
             // Move to previous tile then attack
             const movePath = path.slice(0, i);
             if (movePath.length > 1) {
@@ -1018,6 +1270,11 @@ document.getElementById('btnCenter').addEventListener('click', () => {
   if (u) centerOn(u.x, u.y);
 });
 
+dom.eventPanel?.addEventListener('click', e => {
+  const button = e.target.closest?.('.event-choice');
+  if (button) resolveEventChoice(button.dataset.choice);
+});
+
 // ─── Main loop ──────────────────────────────────────
 let lastTime = 0;
 function gameLoop(now) {
@@ -1042,6 +1299,7 @@ function gameLoop(now) {
   drawLayerReachable();
   drawLayerPath();
   drawLayerCities();
+  drawLayerCamps();
   drawLayerUnits();
   drawLayerFog();
   drawLayerHover();
@@ -1090,5 +1348,7 @@ function gameLoop(now) {
   log('Loading sprites…');
   ATLAS = await buildSpriteAtlas();
   log('Sprites loaded — game starting!', 'good');
+  updateEmpireHud();
+  renderEventPanel();
   requestAnimationFrame(gameLoop);
 })();
