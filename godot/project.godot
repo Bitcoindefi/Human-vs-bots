@@ -12,6 +12,10 @@ EventBus="*res://src/autoload/EventBus.gd"
 Web3Bridge="*res://src/autoload/Web3Bridge.gd"
 AudioManager="*res://src/autoload/AudioManager.gd"
 
+[autoload]
+
+WebBridge="*res://autoloads/WebBridge.gd"
+
 [display]
 window/size/viewport_width=1280
 window/size/viewport_height=720
