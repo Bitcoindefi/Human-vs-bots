@@ -437,7 +437,7 @@ function botTurn() {
       const plan = movementPlanForPath(path, {
         movementLeft: bot.movLeft,
         costForTile: tile => moveCost(tile.x, tile.y),
-        isBlocked: tile => Boolean(S.units.find(u => u.x === tile.x && u.y === tile.y && u !== bot)),
+        isBlocked: tile => S.units.some(u => u.x === tile.x && u.y === tile.y && u !== bot),
       });
       if (plan.steps.length > 0) {
         const last = plan.steps.at(-1);
@@ -1005,7 +1005,7 @@ function handleClick(tx, ty) {
       const plan = movementPlanForPath(path, {
         movementLeft: sel.movLeft,
         costForTile: tile => moveCost(tile.x, tile.y),
-        isBlocked: tile => Boolean(S.units.find(u => u.x === tile.x && u.y === tile.y && u !== sel)),
+        isBlocked: tile => S.units.some(u => u.x === tile.x && u.y === tile.y && u !== sel),
       });
       const blockedTile = path[plan.steps.length + 1];
       const blocker = blockedTile && S.units.find(u => u.x === blockedTile.x && u.y === blockedTile.y && u !== sel);
