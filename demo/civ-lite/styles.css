@@ -34,10 +34,10 @@ body {
 header {
   background: linear-gradient(180deg, #1a2233 0%, var(--surface) 100%);
   border-bottom: 1px solid var(--border);
-  padding: 8px 20px;
+  padding: 8px 14px;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 12px;
   flex-shrink: 0;
   z-index: 10;
 }
@@ -62,7 +62,6 @@ header h1 {
 #status {
   font-size: 0.85rem;
   color: var(--accent2);
-  margin-left: auto;
   font-weight: 500;
 }
 
@@ -73,6 +72,44 @@ header h1 {
 
 #status.status-win { color: var(--accent2); }
 #status.status-lose { color: var(--danger); }
+
+#turnState {
+  color: var(--dim);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+#topResources {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.top-res {
+  display: inline-grid;
+  grid-template-columns: auto auto auto;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 66px;
+  padding: 4px 7px;
+  border: 1px solid rgba(210,153,34,0.26);
+  border-radius: 6px;
+  background: rgba(28,35,48,0.78);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.top-res b {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.top-res small {
+  color: var(--accent2);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -135,6 +172,13 @@ main {
   text-align: right;
 }
 
+.res-row small {
+  min-width: 32px;
+  text-align: right;
+  color: var(--accent2);
+  font-weight: 700;
+}
+
 .res-icon { font-size: 0.9rem; }
 
 /* ───── Unit Info ────────────────────────────────── */
@@ -142,7 +186,8 @@ main {
   min-height: 72px;
 }
 
-#unitDetails .placeholder {
+#unitDetails .placeholder,
+#contextPanel .placeholder {
   color: var(--dim);
   font-size: 0.78rem;
   font-style: italic;
@@ -165,6 +210,17 @@ main {
 .unit-info-header .unit-name {
   font-weight: 700;
   font-size: 0.88rem;
+}
+
+.city-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--civ-color) 70%, #fff 8%), var(--civ-color)),
+    var(--surface2);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--civ-color) 35%, transparent);
 }
 
 .unit-info-stats {
@@ -247,7 +303,8 @@ button:active {
   overflow: hidden;
 }
 
-#logContent {
+#logContent,
+#eventLog {
   font-size: 0.72rem;
   color: var(--dim);
   max-height: 160px;
@@ -255,14 +312,20 @@ button:active {
   line-height: 1.45;
 }
 
-#logContent .log-entry {
+#logContent .log-entry,
+#eventLog .log-entry {
   padding: 2px 0;
   border-bottom: 1px solid rgba(48,54,61,0.3);
 }
 
-#logContent .log-combat { color: var(--danger); }
-#logContent .log-build  { color: var(--accent2); }
-#logContent .log-move   { color: var(--accent); }
+#logContent .log-combat,
+#eventLog .log-combat { color: var(--danger); }
+#logContent .log-build,
+#eventLog .log-build  { color: var(--accent2); }
+#logContent .log-move,
+#eventLog .log-move   { color: var(--accent); }
+#logContent .log-good,
+#eventLog .log-good   { color: var(--accent2); }
 
 /* ───── Tooltip ──────────────────────────────────── */
 #tooltip {
@@ -307,12 +370,19 @@ button:active {
 
 /* ───── Responsive ───────────────────────────────── */
 @media (max-width: 700px) {
+  header { flex-wrap: wrap; }
+  #topResources {
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+  }
   main { flex-direction: column; }
   #sidebar {
     width: 100%;
     flex-direction: row;
     flex-wrap: wrap;
-    max-height: 140px;
+    max-height: min(38vh, 260px);
     overflow-y: auto;
   }
   #sidebar section { flex: 1; min-width: 120px; }
