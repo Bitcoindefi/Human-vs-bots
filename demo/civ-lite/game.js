@@ -4,6 +4,12 @@
    Inspired by Freeciv-web layers, C7 terrain system,
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
+import {
+  advanceFeedback,
+  createCombatFeedback,
+  createFloatingText,
+  createScreenShake,
+} from './feedback-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 
 // ─── Constants ──────────────────────────────────────
@@ -107,6 +113,8 @@ const S = {
   nextId: 3,
   // Visual state
   particles: [],
+  floatingTexts: [],
+  screenShake: createScreenShake(0, 0),
   waterPhase: 0,
   selectionPhase: 0,
   hoverTile: null,
@@ -217,19 +225,21 @@ function combat(attacker, defender) {
   const defTerrain = S.map[defender.y][defender.x];
   const defBonus = TERRAIN_DEFENSE[defTerrain] || 0;
   const dmg = Math.max(5, attacker.atk - defender.def * (1 + defBonus) * 0.5 + Math.random() * 10);
-  defender.hp -= Math.round(dmg);
+  const defenderDamage = Math.round(dmg);
+  defender.hp -= defenderDamage;
+  addCombatFeedback(defender, defenderDamage, defender.hp <= 0);
   // Counter-attack
   if (defender.hp > 0) {
     const counterDmg = Math.max(2, defender.atk * 0.4 - attacker.def * 0.3 + Math.random() * 5);
-    attacker.hp -= Math.round(counterDmg);
-    log(`Counter! ${attacker.type} takes ${Math.round(counterDmg)} dmg`, 'combat');
+    const attackerDamage = Math.round(counterDmg);
+    attacker.hp -= attackerDamage;
+    addCombatFeedback(attacker, attackerDamage, attacker.hp <= 0);
+    log(`Counter! ${attacker.type} takes ${attackerDamage} dmg`, 'combat');
   }
-  spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
-  log(`${attacker.owner}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
+  log(`${attacker.owner}'s ${attacker.type} hits for ${defenderDamage} dmg`, 'combat');
   if (defender.hp <= 0) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
-    spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
   if (attacker.hp <= 0) {
@@ -281,6 +291,41 @@ function updateParticles() {
     p.size *= 0.97;
   }
   S.particles = S.particles.filter(p => p.life > 0);
+}
+
+function addCombatFeedback(unit, damage, destroyed) {
+  const x = unit.x * TILE + TILE / 2;
+  const y = unit.y * TILE + TILE / 2;
+  const feedback = createCombatFeedback({ x, y, damage, destroyed });
+  S.floatingTexts.push(...feedback.texts);
+  S.screenShake = feedback.shake;
+  spawnParticles(x, y, feedback.particleCount);
+}
+
+function addCaptureFeedback(city) {
+  const x = city.x * TILE + TILE / 2;
+  const y = city.y * TILE + TILE / 2;
+  S.floatingTexts.push(createFloatingText({ x, y: y - 18, text: 'Captured!', kind: 'capture' }));
+  S.screenShake = createScreenShake(6, 0.2);
+  spawnParticles(x, y, 18);
+}
+
+function updateFeedback(dt) {
+  const next = advanceFeedback({ texts: S.floatingTexts, shake: S.screenShake }, dt);
+  S.floatingTexts = next.texts;
+  S.screenShake = next.shake;
+}
+
+function getShakeOffset(now) {
+  if (!S.screenShake || S.screenShake.time <= 0 || S.screenShake.intensity <= 0) {
+    return { x: 0, y: 0 };
+  }
+
+  const phase = now * 0.05;
+  return {
+    x: Math.sin(phase * 2.1) * S.screenShake.intensity,
+    y: Math.cos(phase * 1.6) * S.screenShake.intensity,
+  };
 }
 
 // ─── City production ────────────────────────────────
@@ -387,7 +432,11 @@ function botTurn() {
       bot.movLeft = 0;
       // Check city capture
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) {
+        cap.owner = 'bot';
+        addCaptureFeedback(cap);
+        log(`Bot captured ${cap.name}!`, 'combat');
+      }
       continue;
     }
 
@@ -414,7 +463,11 @@ function botTurn() {
       bot.movLeft = movLeft;
       // Capture city
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) {
+        cap.owner = 'bot';
+        addCaptureFeedback(cap);
+        log(`Bot captured ${cap.name}!`, 'combat');
+      }
     }
   }
 
@@ -711,6 +764,22 @@ function drawLayerParticles() {
   ctx.globalAlpha = 1;
 }
 
+function drawLayerFloatingTexts() {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const text of S.floatingTexts) {
+    const alpha = Math.max(0, Math.min(1, text.life / text.maxLife));
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${14 / S.zoom}px system-ui`;
+    ctx.lineWidth = 3 / S.zoom;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(text.text, text.x, text.y);
+    ctx.fillStyle = text.color;
+    ctx.fillText(text.text, text.x, text.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
 // ─── Minimap ────────────────────────────────────────
 function drawMinimap() {
   const mw = miniC.width, mh = miniC.height;
@@ -969,7 +1038,12 @@ function handleClick(tx, ty) {
           refreshVision();
           // City capture
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
-          if (cap) { cap.owner = 'player'; log(`Captured ${cap.name}!`, 'build'); checkWin(); }
+          if (cap) {
+            cap.owner = 'player';
+            addCaptureFeedback(cap);
+            log(`Captured ${cap.name}!`, 'build');
+            checkWin();
+          }
         });
       }
     }
@@ -1028,6 +1102,7 @@ function gameLoop(now) {
   S.waterPhase += dt * 2;
   S.selectionPhase += dt * 3;
   updateParticles();
+  updateFeedback(dt);
 
   // Clear
   ctx.fillStyle = '#070b14';
@@ -1035,6 +1110,8 @@ function gameLoop(now) {
 
   // Render all layers with zoom transform
   ctx.save();
+  const shake = getShakeOffset(now);
+  ctx.translate(shake.x, shake.y);
   ctx.scale(S.zoom, S.zoom);
   ctx.translate(-S.camX, -S.camY);
   drawLayerTerrain();
@@ -1046,6 +1123,7 @@ function gameLoop(now) {
   drawLayerFog();
   drawLayerHover();
   drawLayerParticles();
+  drawLayerFloatingTexts();
   ctx.restore();
 
   // Minimap (screen-space, no zoom)
