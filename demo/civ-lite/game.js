@@ -5,6 +5,13 @@
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  createProductionQueue,
+  enqueueProduction,
+  evaluateVictory,
+  movementPlanForPath,
+  progressProductionQueue,
+} from './production-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -21,6 +28,14 @@ const TERRAIN_YIELD = {
   desert: { food: 0, prod: 1, sci: 1 },
 };
 const TERRAIN_DEFENSE = { plains: 0, forest: 0.25, hill: 0.35, water: 0, desert: 0 };
+const PRODUCTION_OPTIONS = [
+  { id: 'warrior', label: 'Warrior', cost: 12, unitType: 'warrior' },
+  { id: 'scout', label: 'Scout', cost: 8, unitType: 'scout' },
+];
+const UNIT_STATS = {
+  warrior: { hp: 100, atk: 28, def: 15, mov: 2 },
+  scout: { hp: 80, atk: 18, def: 10, mov: 3 },
+};
 
 // ─── DOM refs ───────────────────────────────────────
 const canvas  = document.getElementById('gameCanvas');
@@ -36,6 +51,7 @@ const dom = {
   prod:    document.getElementById('prod'),
   science: document.getElementById('science'),
   unitDet: document.getElementById('unitDetails'),
+  cityDet: document.getElementById('cityDetails'),
   logBox:  document.getElementById('logContent'),
 };
 
@@ -95,8 +111,8 @@ const S = {
     { id: 2, owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, hp: 100, atk: 28, def: 18, mov: 2, movLeft: 2, type: 'warrior' },
   ],
   cities: [
-    { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
-    { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1 },
+    { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1, productionQueue: createProductionQueue(PRODUCTION_OPTIONS) },
+    { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1, productionQueue: createProductionQueue(PRODUCTION_OPTIONS) },
   ],
   turn: 1,
   phase: 'player',  // player | bot | animating | gameover
@@ -115,6 +131,8 @@ const S = {
   reachable: new Set(),
   tileVariants: [],
 };
+
+for (const city of S.cities) enqueueProduction(city.productionQueue, 'warrior');
 
 // Init fog
 for (let y = 0; y < MAP_H; y++) {
@@ -240,16 +258,13 @@ function combat(attacker, defender) {
 }
 
 function checkWin() {
-  const playerUnits = S.units.filter(u => u.owner === 'player');
-  const botUnits    = S.units.filter(u => u.owner === 'bot');
-  const playerCities = S.cities.filter(c => c.owner === 'player');
-  const botCities    = S.cities.filter(c => c.owner === 'bot');
-  if (botUnits.length === 0 && botCities.length === 0) {
+  const result = evaluateVictory(S);
+  if (result.winner === 'player') {
     S.phase = 'gameover';
     dom.status.textContent = '🎉 Victory!';
     dom.status.className = 'status-win';
     log('*** VICTORY! ***', 'build');
-  } else if (playerUnits.length === 0 && playerCities.length === 0) {
+  } else if (result.winner === 'bot') {
     S.phase = 'gameover';
     dom.status.textContent = '💀 Defeat';
     dom.status.className = 'status-lose';
@@ -284,23 +299,55 @@ function updateParticles() {
 }
 
 // ─── City production ────────────────────────────────
+function spawnUnitFromProduction(owner, city, item) {
+  const stats = UNIT_STATS[item.unitType] || UNIT_STATS.warrior;
+  const id = S.nextId++;
+  let spawnX = city.x, spawnY = city.y;
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]]) {
+    const nx = city.x + dx, ny = city.y + dy;
+    if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H &&
+        S.map[ny][nx] !== 'water' &&
+        !S.units.find(u => u.x === nx && u.y === ny)) {
+      spawnX = nx; spawnY = ny; break;
+    }
+  }
+  S.units.push({
+    id,
+    owner,
+    x: spawnX,
+    y: spawnY,
+    hp: stats.hp,
+    atk: stats.atk,
+    def: stats.def,
+    mov: stats.mov,
+    movLeft: stats.mov,
+    type: item.unitType,
+  });
+  log(`${city.name} completed ${item.label}!`, 'build');
+  if (owner === 'player') revealAround(spawnX, spawnY);
+}
+
 function gatherResources(owner) {
   const cities = S.cities.filter(c => c.owner === owner);
   let totalFood = 0, totalProd = 0, totalSci = 0;
   for (const city of cities) {
+    let cityFood = 0, cityProd = 0, citySci = 0;
     // Gather yields from surrounding tiles
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) {
         const nx = city.x + dx, ny = city.y + dy;
         if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H) {
           const y = TERRAIN_YIELD[S.map[ny][nx]];
-          totalFood += y.food;
-          totalProd += y.prod;
-          totalSci  += y.sci;
+          cityFood += y.food;
+          cityProd += y.prod;
+          citySci  += y.sci;
         }
       }
-    city.food += totalFood;
-    city.prod += totalProd;
+    totalFood += cityFood;
+    totalProd += cityProd;
+    totalSci += citySci;
+
+    city.food += cityFood;
 
     // City growth
     if (city.food >= 8 * city.pop) {
@@ -308,24 +355,15 @@ function gatherResources(owner) {
       city.food = 0;
       log(`${city.name} grows to pop ${city.pop}!`, 'build');
     }
-    // Auto-recruit
-    if (city.prod >= 12) {
-      city.prod -= 12;
-      const id = S.nextId++;
-      let spawnX = city.x, spawnY = city.y;
-      // Find empty adjacent tile
-      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]]) {
-        const nx = city.x + dx, ny = city.y + dy;
-        if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H &&
-            S.map[ny][nx] !== 'water' &&
-            !S.units.find(u => u.x === nx && u.y === ny)) {
-          spawnX = nx; spawnY = ny; break;
-        }
-      }
-      S.units.push({ id, owner, x: spawnX, y: spawnY, hp: 100, atk: 28, def: 15, mov: 2, movLeft: 2, type: 'warrior' });
-      log(`${city.name} trained a warrior!`, 'build');
-      if (owner === 'player') revealAround(spawnX, spawnY);
+
+    if (owner === 'bot' && city.productionQueue.items.length === 0) {
+      enqueueProduction(city.productionQueue, 'warrior');
     }
+
+    const result = progressProductionQueue(city.productionQueue, cityProd);
+    city.productionQueue = result.queue;
+    city.prod = city.productionQueue.progress;
+    result.completed.forEach(item => spawnUnitFromProduction(owner, city, item));
   }
   return { food: totalFood, prod: totalProd, sci: totalSci };
 }
@@ -345,6 +383,7 @@ function endPlayerTurn() {
   dom.food.textContent = res.food;
   dom.prod.textContent = res.prod;
   dom.science.textContent = res.sci;
+  updateCityPanel();
 
   setTimeout(botTurn, 400);
 }
@@ -357,6 +396,7 @@ function startPlayerTurn() {
   dom.status.className = '';
   S.units.filter(u => u.owner === 'player').forEach(u => { u.movLeft = u.mov; });
   refreshVision();
+  updateCityPanel();
   log(`─── Turn ${S.turn} ───`);
 }
 
@@ -387,34 +427,33 @@ function botTurn() {
       bot.movLeft = 0;
       // Check city capture
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); checkWin(); updateCityPanel(); }
       continue;
     }
 
     // Move toward target
     const path = findPath(bot.x, bot.y, bestTarget.x, bestTarget.y);
     if (path.length > 1) {
-      let steps = 0, movLeft = bot.movLeft;
-      for (let i = 1; i < path.length && movLeft > 0; i++) {
-        const cost = moveCost(path[i].x, path[i].y);
-        if (cost > movLeft) break;
-        // Check blocking
-        if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== bot)) {
-          if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player')) {
-            combat(bot, S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player'));
-            movLeft = 0;
-          }
-          break;
-        }
-        bot.x = path[i].x;
-        bot.y = path[i].y;
-        movLeft -= cost;
-        steps++;
+      const plan = movementPlanForPath(path, {
+        movementLeft: bot.movLeft,
+        costForTile: tile => moveCost(tile.x, tile.y),
+        isBlocked: tile => Boolean(S.units.find(u => u.x === tile.x && u.y === tile.y && u !== bot)),
+      });
+      if (plan.steps.length > 0) {
+        const last = plan.steps.at(-1);
+        bot.x = last.x;
+        bot.y = last.y;
       }
-      bot.movLeft = movLeft;
+      bot.movLeft = plan.movementLeft;
+      const blockedTile = path[plan.steps.length + 1];
+      const blocker = blockedTile && S.units.find(u => u.x === blockedTile.x && u.y === blockedTile.y && u.owner === 'player');
+      if (blocker && Math.abs(blocker.x - bot.x) + Math.abs(blocker.y - bot.y) === 1) {
+        combat(bot, blocker);
+        bot.movLeft = 0;
+      }
       // Capture city
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); checkWin(); updateCityPanel(); }
     }
   }
 
@@ -790,6 +829,44 @@ function updateUnitPanel() {
   }
 }
 
+function updateCityPanel() {
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) {
+    dom.cityDet.innerHTML = '<p class="placeholder">No city remains</p>';
+    return;
+  }
+
+  const current = city.productionQueue.items[0];
+  const pct = current ? Math.min(100, Math.round((city.productionQueue.progress / current.cost) * 100)) : 0;
+  const queueText = city.productionQueue.items.length > 1
+    ? city.productionQueue.items.slice(1).map(item => item.label).join(' → ')
+    : 'No queued follow-up';
+
+  dom.cityDet.innerHTML = `
+    <div class="city-row">
+      <span class="city-name">${city.name}</span>
+      <span class="queue-meta">Pop ${city.pop}</span>
+    </div>
+    <div class="queue-row">
+      <span class="queue-name">${current ? current.label : 'Idle'}</span>
+      <span class="queue-meta">${current ? `${city.productionQueue.progress}/${current.cost}` : '0/0'}</span>
+    </div>
+    <div class="queue-track" aria-label="Production progress">
+      <div class="queue-fill" style="--pct: ${pct}%"></div>
+    </div>
+    <div class="queue-list">Next: ${queueText}</div>
+    <div class="queue-list">Win: capture Babylon or remove all bot pieces.</div>`;
+}
+
+function queueCityProduction(itemId) {
+  if (S.phase === 'gameover') return;
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) return;
+  const item = enqueueProduction(city.productionQueue, itemId).items.at(-1);
+  log(`${city.name} queued ${item.label}`, 'build');
+  updateCityPanel();
+}
+
 // ─── Tooltip ────────────────────────────────────────
 function showTooltip(x, y, tileX, tileY) {
   if (tileX < 0 || tileX >= MAP_W || tileY < 0 || tileY >= MAP_H) { hideTooltip(); return; }
@@ -924,44 +1001,38 @@ function handleClick(tx, ty) {
 
     const path = findPath(S.selected.x, S.selected.y, tx, ty);
     if (path.length > 1) {
-      // Calculate how far we can go
-      let stepsCanTake = 0, movLeft = S.selected.movLeft;
-      for (let i = 1; i < path.length; i++) {
-        const cost = moveCost(path[i].x, path[i].y);
-        if (cost > movLeft) break;
-        // Block on own units
-        if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== S.selected)) {
-          // If enemy, attack
-          const blocker = S.units.find(u => u.x === path[i].x && u.y === path[i].y);
-          if (blocker && blocker.owner === 'bot') {
-            // Move to previous tile then attack
-            const movePath = path.slice(0, i);
-            if (movePath.length > 1) {
-              const sel = S.selected;
-              animateMove(sel, movePath, () => {
-                sel.movLeft = movLeft;
-                combat(sel, blocker);
-                sel.movLeft = 0;
-                S.reachable.clear();
-                updateUnitPanel();
-                refreshVision();
-              });
-              return;
-            } else {
-              combat(S.selected, blocker);
-              S.selected.movLeft = 0;
-            }
-          }
-          break;
+      const sel = S.selected;
+      const plan = movementPlanForPath(path, {
+        movementLeft: sel.movLeft,
+        costForTile: tile => moveCost(tile.x, tile.y),
+        isBlocked: tile => Boolean(S.units.find(u => u.x === tile.x && u.y === tile.y && u !== sel)),
+      });
+      const blockedTile = path[plan.steps.length + 1];
+      const blocker = blockedTile && S.units.find(u => u.x === blockedTile.x && u.y === blockedTile.y && u !== sel);
+
+      if (blocker && blocker.owner === 'bot') {
+        const movePath = [path[0], ...plan.steps];
+        if (movePath.length > 1) {
+          animateMove(sel, movePath, () => {
+            combat(sel, blocker);
+            sel.movLeft = 0;
+            S.reachable.clear();
+            updateUnitPanel();
+            refreshVision();
+          });
+          return;
         }
-        movLeft -= cost;
-        stepsCanTake = i;
+        combat(sel, blocker);
+        sel.movLeft = 0;
+        S.reachable.clear();
+        updateUnitPanel();
+        refreshVision();
+        return;
       }
 
-      if (stepsCanTake > 0) {
-        const walkPath = path.slice(0, stepsCanTake + 1);
-        const finalMovLeft = movLeft;
-        const sel = S.selected;
+      if (plan.steps.length > 0) {
+        const walkPath = [path[0], ...plan.steps];
+        const finalMovLeft = plan.movementLeft;
         animateMove(sel, walkPath, () => {
           sel.movLeft = finalMovLeft;
           S.reachable = calcReachable(sel);
@@ -1017,6 +1088,8 @@ document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
   if (u) centerOn(u.x, u.y);
 });
+document.getElementById('btnQueueWarrior').addEventListener('click', () => queueCityProduction('warrior'));
+document.getElementById('btnQueueScout').addEventListener('click', () => queueCityProduction('scout'));
 
 // ─── Main loop ──────────────────────────────────────
 let lastTime = 0;
@@ -1090,5 +1163,6 @@ function gameLoop(now) {
   log('Loading sprites…');
   ATLAS = await buildSpriteAtlas();
   log('Sprites loaded — game starting!', 'good');
+  updateCityPanel();
   requestAnimationFrame(gameLoop);
 })();
