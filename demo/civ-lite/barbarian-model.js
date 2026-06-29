@@ -74,7 +74,8 @@ export function planBarbarianCamps({
     }
   }
 
-  const sortedCandidates = candidates.sort((a, b) => a.score - b.score);
+  const sortedCandidates = [...candidates];
+  sortedCandidates.sort((a, b) => a.score - b.score);
 
   return sortedCandidates
     .slice(0, count)
