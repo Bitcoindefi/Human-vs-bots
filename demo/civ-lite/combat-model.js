@@ -95,6 +95,10 @@ function hasTypeAdvantage(attackerProfile, defenderProfile) {
   return attackerProfile.counters === defenderProfile.family;
 }
 
+function hasDefenderTypeAdvantage(attackerProfile, defenderProfile) {
+  return hasTypeAdvantage(defenderProfile, attackerProfile);
+}
+
 export function calculateCombatPreview(attacker, defender, {
   map,
   units = [],
@@ -121,7 +125,7 @@ export function calculateCombatPreview(attacker, defender, {
     modifiers.push({ label: 'Type advantage', value: 0.25 });
   }
 
-  if (hasTypeAdvantage(defenderProfile, attackerProfile)) {
+  if (hasDefenderTypeAdvantage(attackerProfile, defenderProfile)) {
     defenseMultiplier += 0.18;
     modifiers.push({ label: 'Defender type advantage', value: 0.18 });
   }

@@ -840,13 +840,14 @@ function showTooltip(x, y, tileX, tileY) {
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
   const target = S.units.find(u => u.owner !== 'player' && u.x === tileX && u.y === tileY);
   const preview = S.selected && target ? previewCombat(S.selected, target) : null;
+  const modifierLabels = preview?.modifiers.length
+    ? `<small>${preview.modifiers.map(mod => mod.label).join(' • ')}</small>`
+    : '';
   const combatHtml = preview ? `
     <div class="tt-combat">
       <strong>Combat preview</strong>
       <span>${formatCombatPreview(preview)}</span>
-      ${preview.modifiers.length
-        ? `<small>${preview.modifiers.map(mod => mod.label).join(' • ')}</small>`
-        : ''}
+      ${modifierLabels}
     </div>` : '';
   tooltip.innerHTML = `
     <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
