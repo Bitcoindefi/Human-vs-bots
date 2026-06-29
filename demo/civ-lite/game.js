@@ -5,6 +5,17 @@
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  TECH_TREE,
+  advanceResearch,
+  chooseBotResearch,
+  createResearchState,
+  getAvailableTechs,
+  getTech,
+  getTechStatus,
+  getUnlockedContent,
+  selectResearch,
+} from './tech-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -21,6 +32,12 @@ const TERRAIN_YIELD = {
   desert: { food: 0, prod: 1, sci: 1 },
 };
 const TERRAIN_DEFENSE = { plains: 0, forest: 0.25, hill: 0.35, water: 0, desert: 0 };
+const UNIT_STATS = {
+  warrior: { atk: 30, def: 15, mov: 2 },
+  archer: { atk: 24, def: 12, mov: 2 },
+  swordsman: { atk: 38, def: 18, mov: 2 },
+  horseman: { atk: 34, def: 14, mov: 3 },
+};
 
 // ─── DOM refs ───────────────────────────────────────
 const canvas  = document.getElementById('gameCanvas');
@@ -35,6 +52,8 @@ const dom = {
   food:    document.getElementById('food'),
   prod:    document.getElementById('prod'),
   science: document.getElementById('science'),
+  currentTech: document.getElementById('currentTech'),
+  techList: document.getElementById('techList'),
   unitDet: document.getElementById('unitDetails'),
   logBox:  document.getElementById('logContent'),
 };
@@ -91,8 +110,8 @@ function noise(x, y) {
 const S = {
   map: generateMap(),
   units: [
-    { id: 1, owner: 'player', x: 2, y: 2, hp: 100, atk: 30, def: 15, mov: 2, movLeft: 2, type: 'warrior' },
-    { id: 2, owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, hp: 100, atk: 28, def: 18, mov: 2, movLeft: 2, type: 'warrior' },
+    createUnit(1, 'player', 2, 2, 'warrior'),
+    createUnit(2, 'bot', MAP_W - 3, MAP_H - 3, 'warrior'),
   ],
   cities: [
     { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
@@ -105,6 +124,11 @@ const S = {
   camX: 0, camY: 0,
   zoom: 1, targetZoom: 1,
   nextId: 3,
+  research: {
+    player: selectResearch(createResearchState(), 'mining'),
+    bot: createResearchState(),
+  },
+  botPersonality: 'military',
   // Visual state
   particles: [],
   waterPhase: 0,
@@ -115,6 +139,11 @@ const S = {
   reachable: new Set(),
   tileVariants: [],
 };
+
+function createUnit(id, owner, x, y, type = 'warrior') {
+  const stats = UNIT_STATS[type] || UNIT_STATS.warrior;
+  return { id, owner, x, y, hp: 100, atk: stats.atk, def: stats.def, mov: stats.mov, movLeft: stats.mov, type };
+}
 
 // Init fog
 for (let y = 0; y < MAP_H; y++) {
@@ -322,12 +351,92 @@ function gatherResources(owner) {
           spawnX = nx; spawnY = ny; break;
         }
       }
-      S.units.push({ id, owner, x: spawnX, y: spawnY, hp: 100, atk: 28, def: 15, mov: 2, movLeft: 2, type: 'warrior' });
-      log(`${city.name} trained a warrior!`, 'build');
+      const type = chooseUnitToTrain(owner);
+      S.units.push(createUnit(id, owner, spawnX, spawnY, type));
+      log(`${city.name} trained a ${type}!`, 'build');
       if (owner === 'player') revealAround(spawnX, spawnY);
     }
   }
   return { food: totalFood, prod: totalProd, sci: totalSci };
+}
+
+function chooseUnitToTrain(owner) {
+  const unlocks = getUnlockedContent(S.research[owner]);
+  if (unlocks.units.includes('horseman')) return 'horseman';
+  if (unlocks.units.includes('swordsman')) return 'swordsman';
+  if (unlocks.units.includes('archer')) return 'archer';
+  return 'warrior';
+}
+
+function completeResearch(owner, sciencePerTurn) {
+  if (owner === 'bot' && !S.research.bot.current) {
+    const next = chooseBotResearch(S.research.bot, S.botPersonality);
+    if (next) S.research.bot = selectResearch(S.research.bot, next);
+  }
+
+  const before = S.research[owner].current;
+  const result = advanceResearch(S.research[owner], sciencePerTurn);
+  S.research[owner] = result.state;
+
+  if (result.completed.length > 0) {
+    for (const techId of result.completed) {
+      const tech = getTech(techId);
+      log(`${owner === 'player' ? 'You' : 'Bot'} researched ${tech.name}!`, 'build');
+    }
+    if (owner === 'player') updateTechPanel();
+  } else if (before && owner === 'player') {
+    updateTechPanel();
+  }
+
+  if (owner === 'bot' && !S.research.bot.current) {
+    const next = chooseBotResearch(S.research.bot, S.botPersonality);
+    if (next) S.research.bot = selectResearch(S.research.bot, next);
+  }
+}
+
+function researchProgressLabel(state) {
+  if (!state.current) return 'Choose research';
+  const tech = getTech(state.current);
+  return `${tech.name}: ${state.progress}/${tech.cost} 🔬`;
+}
+
+function updateTechPanel() {
+  if (!dom.currentTech || !dom.techList) return;
+  dom.currentTech.textContent = researchProgressLabel(S.research.player);
+  dom.techList.innerHTML = '';
+
+  for (const tech of TECH_TREE) {
+    const status = getTechStatus(S.research.player, tech.id);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `tech-card tech-${status}`;
+    row.disabled = status === 'blocked' || status === 'researched';
+    row.dataset.tech = tech.id;
+    row.innerHTML = `
+      <span class="tech-name">${tech.name}</span>
+      <span class="tech-status">${status.replace('-', ' ')}</span>
+      <span class="tech-cost">🔬 ${tech.cost}</span>
+      <span class="tech-unlocks">${formatUnlocks(tech.unlocks)}</span>`;
+    row.addEventListener('click', () => {
+      try {
+        S.research.player = selectResearch(S.research.player, tech.id);
+        log(`Research started: ${tech.name}`, 'build');
+        updateTechPanel();
+      } catch (error) {
+        log(error.message, 'combat');
+      }
+    });
+    dom.techList.append(row);
+  }
+}
+
+function formatUnlocks(unlocks) {
+  const parts = [
+    ...(unlocks.units || []).map((item) => `Unit: ${item}`),
+    ...(unlocks.buildings || []).map((item) => `Building: ${item}`),
+    ...(unlocks.improvements || []).map((item) => `Improvement: ${item}`),
+  ];
+  return parts.join(' · ') || 'Economy';
 }
 
 // ─── Turn management ────────────────────────────────
@@ -342,6 +451,7 @@ function endPlayerTurn() {
   updateUnitPanel();
 
   const res = gatherResources('player');
+  completeResearch('player', res.sci);
   dom.food.textContent = res.food;
   dom.prod.textContent = res.prod;
   dom.science.textContent = res.sci;
@@ -357,12 +467,14 @@ function startPlayerTurn() {
   dom.status.className = '';
   S.units.filter(u => u.owner === 'player').forEach(u => { u.movLeft = u.mov; });
   refreshVision();
+  updateTechPanel();
   log(`─── Turn ${S.turn} ───`);
 }
 
 // ─── Bot AI ─────────────────────────────────────────
 function botTurn() {
-  gatherResources('bot');
+  const botRes = gatherResources('bot');
+  completeResearch('bot', botRes.sci);
   const bots = S.units.filter(u => u.owner === 'bot');
 
   for (const bot of bots) {
@@ -1090,5 +1202,6 @@ function gameLoop(now) {
   log('Loading sprites…');
   ATLAS = await buildSpriteAtlas();
   log('Sprites loaded — game starting!', 'good');
+  updateTechPanel();
   requestAnimationFrame(gameLoop);
 })();
