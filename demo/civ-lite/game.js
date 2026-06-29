@@ -4,10 +4,16 @@
    Inspired by Freeciv-web layers, C7 terrain system,
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
+import {
+  createGameSetup,
+  getPersonalityPlan,
+  getRelation,
+} from './setup-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 
 // ─── Constants ──────────────────────────────────────
-const MAP_W = 24, MAP_H = 16, TILE = 48;
+let MAP_W = 24, MAP_H = 16;
+const TILE = 48;
 const ZOOM_MIN = 0.4, ZOOM_MAX = 3, ZOOM_SPEED = 0.08;
 const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
 const PAN_SPEED = 500;  // WASD px/sec (world units)
@@ -37,6 +43,15 @@ const dom = {
   science: document.getElementById('science'),
   unitDet: document.getElementById('unitDetails'),
   logBox:  document.getElementById('logContent'),
+  setupMap: document.getElementById('setupMapSize'),
+  setupCivs: document.getElementById('setupCivs'),
+  setupDifficulty: document.getElementById('setupDifficulty'),
+  setupSeed: document.getElementById('setupSeed'),
+  setupDomination: document.getElementById('victoryDomination'),
+  setupTerritory: document.getElementById('victoryTerritory'),
+  setupScience: document.getElementById('victoryScience'),
+  setupRoster: document.getElementById('setupRoster'),
+  btnStartSetup: document.getElementById('btnStartSetup'),
 };
 
 // ─── Build sprite atlas (async) ─────────────────────
@@ -54,57 +69,106 @@ function log(msg, cls = '') {
 // ─── Seeded RNG for tile variants ───────────────────
 function hashTile(x, y) { return ((x * 374761393 + y * 668265263) ^ 1274126177) >>> 0; }
 
+function startPositionsFor(count) {
+  const anchors = [
+    { x: 2, y: 2 },
+    { x: MAP_W - 3, y: MAP_H - 3 },
+    { x: MAP_W - 3, y: 2 },
+    { x: 2, y: MAP_H - 3 },
+  ];
+  return anchors.slice(0, count);
+}
+
+function createUnitsForCivs(civs, starts, setup = null) {
+  return civs.map((civ, index) => ({
+    id: index + 1,
+    owner: civ.id,
+    x: starts[index].x,
+    y: starts[index].y,
+    hp: 100,
+    atk: (civ.personality === 'aggressive' ? 30 : 28) + aiDifficultyBonus(civ, setup),
+    def: (civ.personality === 'scientific' ? 16 : 15) + aiDifficultyBonus(civ, setup),
+    mov: civ.personality === 'expansive' ? 3 : 2,
+    movLeft: civ.personality === 'expansive' ? 3 : 2,
+    type: 'warrior',
+  }));
+}
+
+function aiDifficultyBonus(civ, setup) {
+  const difficulty = setup?.difficulty || 'normal';
+  if (civ.id === 'player') return 0;
+  if (difficulty === 'hard') return 3;
+  if (difficulty === 'easy') return -2;
+  return 0;
+}
+
+function createCitiesForCivs(civs, starts) {
+  return civs.map((civ, index) => ({
+    owner: civ.id,
+    x: starts[index].x,
+    y: starts[index].y,
+    name: civ.name,
+    food: 0,
+    prod: 0,
+    pop: 1,
+  }));
+}
+
 // ─── Map generation ─────────────────────────────────
-function generateMap() {
+function generateMap(seed = 1, starts = startPositionsFor(2)) {
   const map = [];
   for (let y = 0; y < MAP_H; y++) {
     const row = [];
     for (let x = 0; x < MAP_W; x++) {
-      const n = noise(x, y);
-      let t;
-      if (n < 0.2) t = 'water';
-      else if (n < 0.38) t = 'plains';
-      else if (n < 0.55) t = 'forest';
-      else if (n < 0.7) t = 'hill';
-      else t = 'desert';
-      row.push(t);
+      row.push(terrainFromNoise(noise(x, y, seed)));
     }
     map.push(row);
   }
-  // Ensure starting positions are on land
-  for (let dy = -1; dy <= 1; dy++)
-    for (let dx = -1; dx <= 1; dx++) {
-      const y1 = 2 + dy, x1 = 2 + dx;
-      const y2 = MAP_H - 3 + dy, x2 = MAP_W - 3 + dx;
-      if (map[y1][x1] === 'water') map[y1][x1] = 'plains';
-      if (map[y2][x2] === 'water') map[y2][x2] = 'plains';
-    }
+  forceLandStarts(map, starts);
   return map;
 }
 
-function noise(x, y) {
-  const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+function terrainFromNoise(n) {
+  if (n < 0.2) return 'water';
+  if (n < 0.38) return 'plains';
+  if (n < 0.55) return 'forest';
+  if (n < 0.7) return 'hill';
+  return 'desert';
+}
+
+function forceLandStarts(map, starts) {
+  for (const start of starts) {
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const y = start.y + dy, x = start.x + dx;
+        if (map[y]?.[x] === 'water') map[y][x] = 'plains';
+      }
+  }
+}
+
+function noise(x, y, seed = 1) {
+  const s = Math.sin(x * 12.9898 + y * 78.233 + seed * 0.037) * 43758.5453;
   return s - Math.floor(s);
 }
 
+const DEFAULT_SETUP = createGameSetup();
+const DEFAULT_STARTS = startPositionsFor(DEFAULT_SETUP.civs.length);
+
 // ─── State ──────────────────────────────────────────
 const S = {
-  map: generateMap(),
-  units: [
-    { id: 1, owner: 'player', x: 2, y: 2, hp: 100, atk: 30, def: 15, mov: 2, movLeft: 2, type: 'warrior' },
-    { id: 2, owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, hp: 100, atk: 28, def: 18, mov: 2, movLeft: 2, type: 'warrior' },
-  ],
-  cities: [
-    { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
-    { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1 },
-  ],
+  setup: DEFAULT_SETUP,
+  civs: DEFAULT_SETUP.civs,
+  diplomacy: DEFAULT_SETUP.diplomacy,
+  map: generateMap(DEFAULT_SETUP.seed, DEFAULT_STARTS),
+  units: createUnitsForCivs(DEFAULT_SETUP.civs, DEFAULT_STARTS, DEFAULT_SETUP),
+  cities: createCitiesForCivs(DEFAULT_SETUP.civs, DEFAULT_STARTS),
   turn: 1,
   phase: 'player',  // player | bot | animating | gameover
   selected: null,
   fog: [],           // 0=unknown, 1=seen, 2=visible
   camX: 0, camY: 0,
   zoom: 1, targetZoom: 1,
-  nextId: 3,
+  nextId: DEFAULT_SETUP.civs.length + 1,
   // Visual state
   particles: [],
   waterPhase: 0,
@@ -116,15 +180,20 @@ const S = {
   tileVariants: [],
 };
 
-// Init fog
-for (let y = 0; y < MAP_H; y++) {
-  S.fog[y] = [];
-  S.tileVariants[y] = [];
-  for (let x = 0; x < MAP_W; x++) {
-    S.fog[y][x] = 0;
-    S.tileVariants[y][x] = hashTile(x, y) % 4;
+function resetVisibilityState() {
+  S.fog = [];
+  S.tileVariants = [];
+  for (let y = 0; y < MAP_H; y++) {
+    S.fog[y] = [];
+    S.tileVariants[y] = [];
+    for (let x = 0; x < MAP_W; x++) {
+      S.fog[y][x] = 0;
+      S.tileVariants[y][x] = hashTile(x, y) % 4;
+    }
   }
 }
+
+resetVisibilityState();
 
 // ─── Fog helpers ────────────────────────────────────
 function revealAround(x, y, r = SIGHT) {
@@ -148,6 +217,36 @@ function refreshVision() {
 }
 
 refreshVision();
+
+function getCiv(owner) {
+  return S.civs.find(civ => civ.id === owner) || {
+    id: owner,
+    name: owner,
+    personality: 'aggressive',
+    color: '#ff5555',
+  };
+}
+
+function ownerName(owner) {
+  return getCiv(owner).name;
+}
+
+function isPlayerOwner(owner) {
+  return owner === 'player';
+}
+
+function isAiOwner(owner) {
+  return !isPlayerOwner(owner);
+}
+
+function areAtWar(ownerA, ownerB) {
+  if (ownerA === ownerB) return false;
+  return getRelation(S.diplomacy, ownerA, ownerB).status === 'war';
+}
+
+function isPlayerEnemy(unit) {
+  return unit && areAtWar('player', unit.owner);
+}
 
 // ─── Pathfinding (A*) ───────────────────────────────
 function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
@@ -225,26 +324,26 @@ function combat(attacker, defender) {
     log(`Counter! ${attacker.type} takes ${Math.round(counterDmg)} dmg`, 'combat');
   }
   spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
-  log(`${attacker.owner}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
+  log(`${ownerName(attacker.owner)}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
   if (defender.hp <= 0) {
     S.units = S.units.filter(u => u !== defender);
-    log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
+    log(`${ownerName(defender.owner)}'s ${defender.type} destroyed!`, 'combat');
     spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
   if (attacker.hp <= 0) {
     S.units = S.units.filter(u => u !== attacker);
-    log(`${attacker.owner}'s ${attacker.type} destroyed!`, 'combat');
+    log(`${ownerName(attacker.owner)}'s ${attacker.type} destroyed!`, 'combat');
     checkWin();
   }
 }
 
 function checkWin() {
   const playerUnits = S.units.filter(u => u.owner === 'player');
-  const botUnits    = S.units.filter(u => u.owner === 'bot');
+  const enemyUnits  = S.units.filter(u => isAiOwner(u.owner));
   const playerCities = S.cities.filter(c => c.owner === 'player');
-  const botCities    = S.cities.filter(c => c.owner === 'bot');
-  if (botUnits.length === 0 && botCities.length === 0) {
+  const enemyCities  = S.cities.filter(c => isAiOwner(c.owner));
+  if (S.setup.victories.domination && enemyUnits.length === 0 && enemyCities.length === 0) {
     S.phase = 'gameover';
     dom.status.textContent = '🎉 Victory!';
     dom.status.className = 'status-win';
@@ -330,6 +429,84 @@ function gatherResources(owner) {
   return { food: totalFood, prod: totalProd, sci: totalSci };
 }
 
+function readSetupOptions() {
+  return {
+    mapSize: dom.setupMap?.value || S.setup.mapSize,
+    civCount: dom.setupCivs?.value || S.setup.civCount,
+    difficulty: dom.setupDifficulty?.value || S.setup.difficulty,
+    seed: dom.setupSeed?.value || S.setup.seed,
+    victories: {
+      domination: dom.setupDomination?.checked ?? S.setup.victories.domination,
+      territory: dom.setupTerritory?.checked ?? S.setup.victories.territory,
+      science: dom.setupScience?.checked ?? S.setup.victories.science,
+    },
+  };
+}
+
+function applyGameSetup(options = readSetupOptions()) {
+  const setup = createGameSetup(options);
+  MAP_W = setup.map.width;
+  MAP_H = setup.map.height;
+  const starts = startPositionsFor(setup.civs.length);
+
+  S.setup = setup;
+  S.civs = setup.civs;
+  S.diplomacy = setup.diplomacy;
+  S.map = generateMap(setup.seed, starts);
+  S.units = createUnitsForCivs(setup.civs, starts, setup);
+  S.cities = createCitiesForCivs(setup.civs, starts);
+  S.turn = 1;
+  S.phase = 'player';
+  S.selected = null;
+  S.camX = 0;
+  S.camY = 0;
+  S.zoom = 1;
+  S.targetZoom = 1;
+  S.nextId = setup.civs.length + 1;
+  S.particles = [];
+  S.hoverTile = null;
+  S.animating = null;
+  S.path = [];
+  S.reachable = new Set();
+
+  resetVisibilityState();
+  refreshVision();
+  centerOn(starts[0].x, starts[0].y);
+  dom.turn.textContent = 'Turn 1';
+  dom.status.textContent = 'Your turn';
+  dom.status.className = '';
+  dom.food.textContent = '0';
+  dom.prod.textContent = '0';
+  dom.science.textContent = '0';
+  dom.logBox.replaceChildren();
+  updateUnitPanel();
+  renderSetupRoster();
+  log(`Started ${setup.civs.length}-civ ${setup.map.label} game, seed ${setup.seed}.`, 'build');
+}
+
+function renderSetupRoster() {
+  if (!dom.setupRoster) return;
+  const civRows = S.civs.map(civ => {
+    const relation = civ.id === 'player' ? 'player' : getRelation(S.diplomacy, 'player', civ.id).status;
+    const plan = getPersonalityPlan(civ.personality);
+    return `<div class="civ-row">
+      <span class="civ-swatch" style="background:${civ.color}"></span>
+      <span>${civ.name}</span>
+      <span>${plan.label}</span>
+      <span>${relation}</span>
+    </div>`;
+  }).join('');
+  const aiCivs = S.civs.filter(civ => isAiOwner(civ.id));
+  const diplomacyRows = [];
+  for (let i = 0; i < aiCivs.length; i++) {
+    for (let j = i + 1; j < aiCivs.length; j++) {
+      const relation = getRelation(S.diplomacy, aiCivs[i].id, aiCivs[j].id);
+      diplomacyRows.push(`<div class="diplo-row">${aiCivs[i].name} - ${aiCivs[j].name}: ${relation.status}</div>`);
+    }
+  }
+  dom.setupRoster.innerHTML = civRows + diplomacyRows.join('');
+}
+
 // ─── Turn management ────────────────────────────────
 function endPlayerTurn() {
   if (S.phase !== 'player') return;
@@ -361,33 +538,50 @@ function startPlayerTurn() {
 }
 
 // ─── Bot AI ─────────────────────────────────────────
+function findBotTarget(bot) {
+  const plan = getPersonalityPlan(getCiv(bot.owner).personality);
+  for (const targetType of plan.targetOrder) {
+    const targets = targetType === 'unit'
+      ? S.units.filter(u => areAtWar(bot.owner, u.owner))
+      : S.cities.filter(c => areAtWar(bot.owner, c.owner));
+    const target = nearestTarget(bot, targets);
+    if (target) return target;
+  }
+  return null;
+}
+
+function nearestTarget(unit, targets) {
+  let bestTarget = null, bestDist = Infinity;
+  for (const target of targets) {
+    const d = Math.abs(target.x - unit.x) + Math.abs(target.y - unit.y);
+    if (d < bestDist) {
+      bestDist = d;
+      bestTarget = { x: target.x, y: target.y };
+    }
+  }
+  return bestTarget;
+}
+
 function botTurn() {
-  gatherResources('bot');
-  const bots = S.units.filter(u => u.owner === 'bot');
+  for (const civ of S.civs.filter(civ => isAiOwner(civ.id))) {
+    gatherResources(civ.id);
+  }
+  const bots = S.units.filter(u => isAiOwner(u.owner));
 
   for (const bot of bots) {
     bot.movLeft = bot.mov;
-    // Find nearest player target (units or cities)
-    let bestTarget = null, bestDist = Infinity;
-    for (const u of S.units.filter(u => u.owner === 'player')) {
-      const d = Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y);
-      if (d < bestDist) { bestDist = d; bestTarget = { x: u.x, y: u.y }; }
-    }
-    for (const c of S.cities.filter(c => c.owner === 'player')) {
-      const d = Math.abs(c.x - bot.x) + Math.abs(c.y - bot.y);
-      if (d < bestDist) { bestDist = d; bestTarget = { x: c.x, y: c.y }; }
-    }
+    const bestTarget = findBotTarget(bot);
     if (!bestTarget) continue;
 
-    // Check if adjacent to a player unit (attack)
-    const adj = S.units.find(u => u.owner === 'player' &&
+    // Check if adjacent to an enemy unit (attack)
+    const adj = S.units.find(u => areAtWar(bot.owner, u.owner) &&
       Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y) === 1);
     if (adj) {
       combat(bot, adj);
       bot.movLeft = 0;
       // Check city capture
-      const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      const cap = S.cities.find(c => areAtWar(bot.owner, c.owner) && c.x === bot.x && c.y === bot.y);
+      if (cap) { cap.owner = bot.owner; log(`${ownerName(bot.owner)} captured ${cap.name}!`, 'combat'); }
       continue;
     }
 
@@ -399,9 +593,10 @@ function botTurn() {
         const cost = moveCost(path[i].x, path[i].y);
         if (cost > movLeft) break;
         // Check blocking
-        if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== bot)) {
-          if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player')) {
-            combat(bot, S.units.find(u => u.x === path[i].x && u.y === path[i].y && u.owner === 'player'));
+        const blocker = S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== bot);
+        if (blocker) {
+          if (areAtWar(bot.owner, blocker.owner)) {
+            combat(bot, blocker);
             movLeft = 0;
           }
           break;
@@ -413,8 +608,8 @@ function botTurn() {
       }
       bot.movLeft = movLeft;
       // Capture city
-      const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      const cap = S.cities.find(c => areAtWar(bot.owner, c.owner) && c.x === bot.x && c.y === bot.y);
+      if (cap) { cap.owner = bot.owner; log(`${ownerName(bot.owner)} captured ${cap.name}!`, 'combat'); }
     }
   }
 
@@ -590,11 +785,12 @@ function drawLayerCities() {
     if (S.fog[city.y][city.x] === 0) continue;
     const px = city.x * TILE + TILE / 2;
     const py = city.y * TILE + TILE / 2;
-    const sprite = city.owner === 'player' ? ATLAS.cities.player : ATLAS.cities.bot;
+    const civ = getCiv(city.owner);
+    const sprite = isPlayerOwner(city.owner) ? ATLAS.cities.player : ATLAS.cities.bot;
     ctx.drawImage(sprite, px - 28, py - 28, 56, 56);
 
     ctx.font = `bold ${9 / S.zoom}px system-ui`;
-    ctx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff5555';
+    ctx.fillStyle = civ.color;
     ctx.textAlign = 'center';
     ctx.fillText(city.name, px, py + 28);
 
@@ -614,9 +810,9 @@ function drawLayerUnits() {
     // Skip animated unit at its stored position
     if (S.animating && S.animating.unit === unit) continue;
     if (S.fog[unit.y][unit.x] === 0) continue;
-    if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
+    if (isAiOwner(unit.owner) && S.fog[unit.y][unit.x] < 2) continue;
 
-    const sprite = unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
+    const sprite = isPlayerOwner(unit.owner) ? ATLAS.units.player : ATLAS.units.bot;
     const px = unit.x * TILE;
     const py = unit.y * TILE;
     ctx.drawImage(sprite, px, py, TILE, TILE);
@@ -625,7 +821,7 @@ function drawLayerUnits() {
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, unit.hp / 100);
 
     // Movement pips
-    if (unit.owner === 'player') {
+    if (isPlayerOwner(unit.owner)) {
       for (let i = 0; i < unit.mov; i++) {
         ctx.fillStyle = i < unit.movLeft ? '#5af0aa' : '#333';
         ctx.beginPath();
@@ -740,12 +936,12 @@ function drawMinimap() {
 
   // Units & cities on minimap
   for (const city of S.cities) {
-    miniCtx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff4444';
+    miniCtx.fillStyle = getCiv(city.owner).color;
     miniCtx.fillRect(city.x * tw, city.y * th, tw * 2, th * 2);
   }
   for (const unit of S.units) {
-    if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
-    miniCtx.fillStyle = unit.owner === 'player' ? '#5af0ff' : '#ff6666';
+    if (isAiOwner(unit.owner) && S.fog[unit.y][unit.x] < 2) continue;
+    miniCtx.fillStyle = getCiv(unit.owner).color;
     miniCtx.beginPath();
     miniCtx.arc(unit.x * tw + tw / 2, unit.y * th + th / 2, Math.max(tw, th) * 0.6, 0, Math.PI * 2);
     miniCtx.fill();
@@ -769,6 +965,7 @@ function updateUnitPanel() {
     dom.unitDet.innerHTML = '<p class="placeholder">Click a unit to see details</p>';
     return;
   }
+  const civ = getCiv(u.owner);
   const hpClass = u.hp > 60 ? 'hp-high' : u.hp > 30 ? 'hp-mid' : 'hp-low';
   dom.unitDet.innerHTML = `
     <div class="unit-info-header">
@@ -776,6 +973,8 @@ function updateUnitPanel() {
       <span class="unit-name">${u.type.charAt(0).toUpperCase() + u.type.slice(1)}</span>
     </div>
     <div class="unit-info-stats">
+      <span class="stat-label">CIV</span><span class="stat-val" style="color:${civ.color}">${civ.name}</span>
+      <span class="stat-label">AI</span><span class="stat-val">${civ.personality}</span>
       <span class="stat-label">HP</span><span class="stat-val ${hpClass}">${u.hp}/100</span>
       <span class="stat-label">ATK</span><span class="stat-val">${u.atk}</span>
       <span class="stat-label">DEF</span><span class="stat-val">${u.def}</span>
@@ -785,7 +984,7 @@ function updateUnitPanel() {
   const ic = document.getElementById('unitIcon');
   if (ic) {
     const ictx = ic.getContext('2d');
-    const sprite = u.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
+    const sprite = isPlayerOwner(u.owner) ? ATLAS.units.player : ATLAS.units.bot;
     ictx.drawImage(sprite, 0, 0, 32, 32);
   }
 }
@@ -912,7 +1111,7 @@ function handleClick(tx, ty) {
 
   // Move / attack with selected unit
   if (S.selected && S.selected.movLeft > 0) {
-    const enemy = S.units.find(u => u.owner === 'bot' && u.x === tx && u.y === ty);
+    const enemy = S.units.find(u => isPlayerEnemy(u) && u.x === tx && u.y === ty);
     if (enemy && Math.abs(enemy.x - S.selected.x) + Math.abs(enemy.y - S.selected.y) === 1) {
       combat(S.selected, enemy);
       S.selected.movLeft = 0;
@@ -933,7 +1132,7 @@ function handleClick(tx, ty) {
         if (S.units.find(u => u.x === path[i].x && u.y === path[i].y && u !== S.selected)) {
           // If enemy, attack
           const blocker = S.units.find(u => u.x === path[i].x && u.y === path[i].y);
-          if (blocker && blocker.owner === 'bot') {
+          if (blocker && areAtWar(S.selected.owner, blocker.owner)) {
             // Move to previous tile then attack
             const movePath = path.slice(0, i);
             if (movePath.length > 1) {
@@ -968,7 +1167,7 @@ function handleClick(tx, ty) {
           updateUnitPanel();
           refreshVision();
           // City capture
-          const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
+          const cap = S.cities.find(c => areAtWar(sel.owner, c.owner) && c.x === sel.x && c.y === sel.y);
           if (cap) { cap.owner = 'player'; log(`Captured ${cap.name}!`, 'build'); checkWin(); }
         });
       }
@@ -1017,6 +1216,8 @@ document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
   if (u) centerOn(u.x, u.y);
 });
+dom.btnStartSetup?.addEventListener('click', () => applyGameSetup());
+renderSetupRoster();
 
 // ─── Main loop ──────────────────────────────────────
 let lastTime = 0;
