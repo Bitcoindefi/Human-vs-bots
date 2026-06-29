@@ -5,6 +5,13 @@
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  buildBuilding,
+  calculateCityEconomy,
+  CITY_BUILDINGS,
+  createCity,
+  progressCityTurn,
+} from './city-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -35,6 +42,7 @@ const dom = {
   food:    document.getElementById('food'),
   prod:    document.getElementById('prod'),
   science: document.getElementById('science'),
+  cityDet: document.getElementById('cityDetails'),
   unitDet: document.getElementById('unitDetails'),
   logBox:  document.getElementById('logContent'),
 };
@@ -95,8 +103,8 @@ const S = {
     { id: 2, owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, hp: 100, atk: 28, def: 18, mov: 2, movLeft: 2, type: 'warrior' },
   ],
   cities: [
-    { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
-    { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1 },
+    createCity({ owner: 'player', x: 2, y: 2, name: 'Athens' }),
+    createCity({ owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon' }),
   ],
   turn: 1,
   phase: 'player',  // player | bot | animating | gameover
@@ -148,6 +156,7 @@ function refreshVision() {
 }
 
 refreshVision();
+updateCityPanel();
 
 // ─── Pathfinding (A*) ───────────────────────────────
 function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
@@ -287,29 +296,23 @@ function updateParticles() {
 function gatherResources(owner) {
   const cities = S.cities.filter(c => c.owner === owner);
   let totalFood = 0, totalProd = 0, totalSci = 0;
+  const empireCityCount = cities.length;
   for (const city of cities) {
-    // Gather yields from surrounding tiles
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) {
-        const nx = city.x + dx, ny = city.y + dy;
-        if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H) {
-          const y = TERRAIN_YIELD[S.map[ny][nx]];
-          totalFood += y.food;
-          totalProd += y.prod;
-          totalSci  += y.sci;
-        }
-      }
-    city.food += totalFood;
-    city.prod += totalProd;
+    const economy = calculateCityEconomy(city, S.map, TERRAIN_YIELD, empireCityCount);
+    const beforePop = city.pop;
+    Object.assign(city, progressCityTurn(city, economy));
+    totalFood += economy.totalYields.food;
+    totalProd += economy.totalYields.prod;
+    totalSci += economy.totalYields.sci;
 
     // City growth
-    if (city.food >= 8 * city.pop) {
-      city.pop++;
-      city.food = 0;
+    if (city.pop > beforePop) {
       log(`${city.name} grows to pop ${city.pop}!`, 'build');
     }
-    // Auto-recruit
-    if (city.prod >= 12) {
+
+    // Bot auto-recruitment keeps the prototype opponent active; player
+    // production is banked for city buildings until #16 adds a queue.
+    if (owner === 'bot' && city.prod >= 12) {
       city.prod -= 12;
       const id = S.nextId++;
       let spawnX = city.x, spawnY = city.y;
@@ -327,6 +330,7 @@ function gatherResources(owner) {
       if (owner === 'player') revealAround(spawnX, spawnY);
     }
   }
+  updateCityPanel();
   return { food: totalFood, prod: totalProd, sci: totalSci };
 }
 
@@ -605,6 +609,14 @@ function drawLayerCities() {
     ctx.fillStyle = '#ffd700';
     ctx.font = `bold ${8 / S.zoom}px system-ui`;
     ctx.fillText(city.pop, px + 18, py - 15);
+
+    if (city.buildings?.length) {
+      ctx.fillStyle = '#1b1f2a';
+      ctx.fillRect(px - 20, py + 32, 40, 10);
+      ctx.fillStyle = city.owner === 'player' ? '#3fb950' : '#d29922';
+      ctx.font = `bold ${7 / S.zoom}px system-ui`;
+      ctx.fillText(`${city.buildings.length} bld`, px, py + 40);
+    }
   }
 }
 
@@ -790,6 +802,55 @@ function updateUnitPanel() {
   }
 }
 
+// ─── City management panel ──────────────────────────
+function updateCityPanel() {
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) {
+    dom.cityDet.innerHTML = '<p class="placeholder">No player city remains</p>';
+    return;
+  }
+  const playerCityCount = S.cities.filter(c => c.owner === 'player').length;
+  const economy = calculateCityEconomy(city, S.map, TERRAIN_YIELD, playerCityCount);
+  const happinessClass = economy.happiness >= 1 ? 'happy-good' : economy.happiness === 0 ? 'happy-neutral' : 'happy-bad';
+  const built = city.buildings.length ? city.buildings.map(key => CITY_BUILDINGS[key]?.name || key).join(', ') : 'None';
+  const workedTiles = economy.workedTiles
+    .map(tile => `${tile.terrain} (${tile.yields.food}/${tile.yields.prod}/${tile.yields.sci})`)
+    .join(', ');
+  const buttons = Object.entries(CITY_BUILDINGS).map(([key, building]) => {
+    const isBuilt = city.buildings.includes(key);
+    const affordable = city.prod >= building.cost;
+    const disabled = isBuilt || !affordable ? ' disabled' : '';
+    const label = isBuilt ? `${building.name} built` : `Build ${building.name} (${building.cost})`;
+    const hint = formatBuildingHint(building);
+    return `<button type="button" data-building="${key}"${disabled}>${label}<span>${hint}</span></button>`;
+  }).join('');
+
+  dom.cityDet.innerHTML = `
+    <div class="city-card">
+      <div class="city-title"><strong>${city.name}</strong><span>Pop ${city.pop}</span></div>
+      <div class="city-stat-grid">
+        <span>Food</span><strong>${city.food}/${economy.foodRequired}</strong>
+        <span>Prod bank</span><strong>${city.prod}</strong>
+        <span>Happiness</span><strong class="${happinessClass}">${economy.happiness}</strong>
+        <span>Defense</span><strong>+${economy.defenseBonus}</strong>
+      </div>
+      <div class="city-yields">+${economy.totalYields.food} 🌾 +${economy.totalYields.prod} ⚒️ +${economy.totalYields.sci} 🔬 / turn</div>
+      <p class="city-meta">Buildings: ${built}</p>
+      <p class="city-meta">Worked: ${workedTiles}</p>
+      <div class="building-actions">${buttons}</div>
+    </div>`;
+}
+
+function formatBuildingHint(building) {
+  const parts = [];
+  if (building.yields.food) parts.push(`+${building.yields.food} food`);
+  if (building.yields.prod) parts.push(`+${building.yields.prod} prod`);
+  if (building.yields.sci) parts.push(`+${building.yields.sci} science`);
+  if (building.amenities) parts.push(`+${building.amenities} amenity`);
+  if (building.defense) parts.push(`+${building.defense} defense`);
+  return parts.join(', ');
+}
+
 // ─── Tooltip ────────────────────────────────────────
 function showTooltip(x, y, tileX, tileY) {
   if (tileX < 0 || tileX >= MAP_W || tileY < 0 || tileY >= MAP_H) { hideTooltip(); return; }
@@ -797,13 +858,18 @@ function showTooltip(x, y, tileX, tileY) {
   const terrain = S.map[tileY][tileX];
   const yields = TERRAIN_YIELD[terrain];
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const workedBy = S.cities
+    .filter(c => c.owner === 'player')
+    .find(c => calculateCityEconomy(c, S.map, TERRAIN_YIELD, S.cities.filter(city => city.owner === c.owner).length)
+      .workedTiles.some(tile => tile.x === tileX && tile.y === tileY));
   tooltip.innerHTML = `
     <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
     <div class="tt-yields">
       <span>🌾${yields.food}</span>
       <span>⚒️${yields.prod}</span>
       <span>🔬${yields.sci}</span>
-    </div>`;
+    </div>
+    ${workedBy ? `<div class="tt-worked">Worked by ${workedBy.name}</div>` : ''}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';
@@ -969,7 +1035,7 @@ function handleClick(tx, ty) {
           refreshVision();
           // City capture
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
-          if (cap) { cap.owner = 'player'; log(`Captured ${cap.name}!`, 'build'); checkWin(); }
+          if (cap) { cap.owner = 'player'; Object.assign(cap, createCity(cap)); log(`Captured ${cap.name}!`, 'build'); updateCityPanel(); checkWin(); }
         });
       }
     }
@@ -1016,6 +1082,20 @@ document.getElementById('btnEndTurn').addEventListener('click', endPlayerTurn);
 document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
   if (u) centerOn(u.x, u.y);
+});
+dom.cityDet.addEventListener('click', e => {
+  const btn = e.target.closest('[data-building]');
+  if (!btn) return;
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) return;
+  const result = buildBuilding(city, btn.dataset.building);
+  if (result.ok) {
+    Object.assign(city, result.city);
+    log(`${city.name} built ${CITY_BUILDINGS[btn.dataset.building].name}.`, 'build');
+  } else {
+    log(`Cannot build ${CITY_BUILDINGS[btn.dataset.building]?.name || 'building'}: ${result.reason}.`, 'combat');
+  }
+  updateCityPanel();
 });
 
 // ─── Main loop ──────────────────────────────────────
