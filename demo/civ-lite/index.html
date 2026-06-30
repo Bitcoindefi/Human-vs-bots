@@ -12,6 +12,13 @@
     <h1>⚔️ CIV Lite</h1>
     <span id="turnLabel">Turn 1</span>
     <span id="status">Your turn</span>
+    <span id="turnState">1 city · 1 unit</span>
+    <nav id="topResources" aria-label="Empire resources">
+      <span class="top-res"><span class="res-icon">🌾</span><b id="food">0</b><small id="foodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">⚒️</span><b id="prod">0</b><small id="prodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">🔬</span><b id="science">0</b><small id="scienceRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">💰</span><b id="gold">0</b><small id="goldRate">+0</small></span>
+    </nav>
   </header>
 
   <main>
@@ -20,15 +27,16 @@
     <aside id="sidebar">
       <section id="resources">
         <h3>Empire</h3>
-        <div class="res-row"><span class="res-icon">🌾</span> Food <span id="food">0</span></div>
-        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span id="prod">0</span></div>
-        <div class="res-row"><span class="res-icon">🔬</span> Science <span id="science">0</span></div>
+        <div class="res-row"><span class="res-icon">🌾</span> Food <span class="res-total" data-source="food">0</span><small data-source="foodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span class="res-total" data-source="prod">0</span><small data-source="prodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">🔬</span> Science <span class="res-total" data-source="science">0</span><small data-source="scienceRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">💰</span> Gold <span class="res-total" data-source="gold">0</span><small data-source="goldRate">+0</small></div>
       </section>
 
       <section id="unitInfo">
-        <h3>Selected Unit</h3>
-        <div id="unitDetails">
-          <p class="placeholder">Click a unit to see details</p>
+        <h3>Context</h3>
+        <div id="contextPanel">
+          <p class="placeholder">Click a unit or city to see details</p>
         </div>
       </section>
 
@@ -39,7 +47,7 @@
       </section>
 
       <section id="actions">
-        <button id="btnEndTurn">End Turn (E)</button>
+        <button id="btnEndTurn">Next Turn (Enter/E)</button>
         <button id="btnCenter">Center (C)</button>
         <button id="btnHelp">Help</button>
       </section>
@@ -50,8 +58,8 @@
       </section>
 
       <section id="log">
-        <h3>Log</h3>
-        <div id="logContent"></div>
+        <h3>Turn Log</h3>
+        <div id="eventLog"></div>
       </section>
     </aside>
   </main>
