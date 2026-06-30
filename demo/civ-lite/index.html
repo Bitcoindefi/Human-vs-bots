@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CIV Lite – Human vs Bots</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,6 +12,13 @@
     <h1>⚔️ CIV Lite</h1>
     <span id="turnLabel">Turn 1</span>
     <span id="status">Your turn</span>
+    <span id="turnState">1 city · 1 unit</span>
+    <nav id="topResources" aria-label="Empire resources">
+      <span class="top-res"><span class="res-icon">🌾</span><b id="food">0</b><small id="foodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">⚒️</span><b id="prod">0</b><small id="prodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">🔬</span><b id="science">0</b><small id="scienceRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">💰</span><b id="gold">0</b><small id="goldRate">+0</small></span>
+    </nav>
   </header>
 
   <main>
@@ -58,22 +66,84 @@
 
       <section id="resources">
         <h3>Empire</h3>
-        <div class="res-row"><span class="res-icon">🌾</span> Food <span id="food">0</span></div>
-        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span id="prod">0</span></div>
-        <div class="res-row"><span class="res-icon">🔬</span> Science <span id="science">0</span></div>
+        <div class="res-row"><span class="res-icon">🌾</span> Food <span class="res-total" data-source="food">0</span><small data-source="foodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span class="res-total" data-source="prod">0</span><small data-source="prodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">🔬</span> Science <span class="res-total" data-source="science">0</span><small data-source="scienceRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">💰</span> Gold <span class="res-total" data-source="gold">0</span><small data-source="goldRate">+0</small></div>
       </section>
 
-      <section id="unitInfo">
-        <h3>Selected Unit</h3>
-        <div id="unitDetails">
-          <p class="placeholder">Click a unit to see details</p>
+      <section id="resourceTrade">
+        <h3>Resources & Trade</h3>
+        <div class="trade-group">
+          <span class="trade-label">Strategic</span>
+          <span id="strategicList" class="trade-list">None controlled</span>
+        </div>
+        <div class="trade-group">
+          <span class="trade-label">Luxury</span>
+          <span id="luxuryList" class="trade-list">None controlled</span>
+        </div>
+        <button id="btnTrade">Open Trade Route</button>
+        <p id="tradeStatus" class="trade-status">Find resources near cities to trade.</p>
+      </section>
+
+      <section id="cityInfo">
+        <h3>City Management</h3>
+        <div id="cityDetails">
+          <p class="placeholder">City details loading</p>
         </div>
       </section>
 
+      <section id="unitInfo">
+        <h3>Context</h3>
+        <div id="contextPanel">
+          <p class="placeholder">Click a unit or city to see details</p>
+        </div>
+      </section>
+
+      <section id="technology">
+        <h3>Technology</h3>
+        <div id="currentTech">Choose research</div>
+        <div id="techList" aria-label="Technology tree"></div>
+      </section>
+
       <section id="actions">
-        <button id="btnEndTurn">End Turn (E)</button>
+        <button id="btnEndTurn">Next Turn (Enter/E)</button>
         <button id="btnCenter">Center (C)</button>
         <button id="btnHelp">Help</button>
+      </section>
+
+      <section id="events">
+        <h3>Frontier Event</h3>
+        <div id="eventPanel">
+          <p class="placeholder">No active event</p>
+        </div>
+      </section>
+
+      <section id="audioPanel">
+        <h3>Audio</h3>
+        <div class="audio-row">
+          <label for="audioTheme">Theme</label>
+          <select id="audioTheme">
+            <option value="game">Game</option>
+            <option value="menu">Menu</option>
+          </select>
+        </div>
+        <div class="audio-row">
+          <label for="masterVolume">Master</label>
+          <input id="masterVolume" type="range" min="0" max="100" value="75">
+        </div>
+        <div class="audio-row">
+          <label for="musicVolume">Music</label>
+          <input id="musicVolume" type="range" min="0" max="100" value="55">
+        </div>
+        <div class="audio-row">
+          <label for="sfxVolume">SFX</label>
+          <input id="sfxVolume" type="range" min="0" max="100" value="80">
+        </div>
+        <div class="audio-actions">
+          <button id="btnMute" type="button" aria-pressed="false">Mute</button>
+          <span id="audioState">Ready</span>
+        </div>
       </section>
 
       <section id="minimapBox">
@@ -82,8 +152,8 @@
       </section>
 
       <section id="log">
-        <h3>Log</h3>
-        <div id="logContent"></div>
+        <h3>Turn Log</h3>
+        <div id="eventLog"></div>
       </section>
     </aside>
   </main>
