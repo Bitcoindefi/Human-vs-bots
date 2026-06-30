@@ -34,10 +34,10 @@ body {
 header {
   background: linear-gradient(180deg, #1a2233 0%, var(--surface) 100%);
   border-bottom: 1px solid var(--border);
-  padding: 8px 20px;
+  padding: 8px 14px;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 12px;
   flex-shrink: 0;
   z-index: 10;
 }
@@ -62,7 +62,6 @@ header h1 {
 #status {
   font-size: 0.85rem;
   color: var(--accent2);
-  margin-left: auto;
   font-weight: 500;
 }
 
@@ -73,6 +72,44 @@ header h1 {
 
 #status.status-win { color: var(--accent2); }
 #status.status-lose { color: var(--danger); }
+
+#turnState {
+  color: var(--dim);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+#topResources {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.top-res {
+  display: inline-grid;
+  grid-template-columns: auto auto auto;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 66px;
+  padding: 4px 7px;
+  border: 1px solid rgba(210,153,34,0.26);
+  border-radius: 6px;
+  background: rgba(28,35,48,0.78);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.top-res b {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.top-res small {
+  color: var(--accent2);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -134,6 +171,13 @@ main {
   font-weight: 700;
   min-width: 28px;
   text-align: right;
+}
+
+.res-row small {
+  min-width: 32px;
+  text-align: right;
+  color: var(--accent2);
+  font-weight: 700;
 }
 
 .res-icon { font-size: 0.9rem; }
@@ -232,7 +276,8 @@ main {
   min-height: 72px;
 }
 
-#unitDetails .placeholder {
+#unitDetails .placeholder,
+#contextPanel .placeholder {
   color: var(--dim);
   font-size: 0.78rem;
   font-style: italic;
@@ -257,6 +302,17 @@ main {
   font-size: 0.88rem;
 }
 
+.city-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--civ-color) 70%, #fff 8%), var(--civ-color)),
+    var(--surface2);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--civ-color) 35%, transparent);
+}
+
 .unit-info-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -276,6 +332,80 @@ main {
 .stat-val.hp-high { color: var(--accent2); }
 .stat-val.hp-mid  { color: var(--gold); }
 .stat-val.hp-low  { color: var(--danger); }
+
+/* ───── Technology ───────────────────────────────── */
+#technology {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+#currentTech {
+  padding: 7px 8px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(88,166,255,0.24);
+  border-radius: 6px;
+  background: rgba(88,166,255,0.08);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+#techList {
+  display: grid;
+  gap: 6px;
+}
+
+.tech-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 7px 8px;
+  text-align: left;
+  border-radius: 6px;
+}
+
+.tech-name {
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.tech-status,
+.tech-cost,
+.tech-unlocks {
+  color: var(--dim);
+  font-size: 0.64rem;
+  text-transform: capitalize;
+}
+
+.tech-cost {
+  text-align: right;
+  color: var(--gold);
+}
+
+.tech-unlocks {
+  grid-column: 1 / -1;
+  text-transform: none;
+}
+
+.tech-available {
+  border-color: rgba(63,185,80,0.35);
+}
+
+.tech-in-progress {
+  border-color: rgba(210,153,34,0.7);
+  box-shadow: inset 0 0 0 1px rgba(210,153,34,0.22);
+}
+
+.tech-researched {
+  opacity: 0.76;
+  background: linear-gradient(180deg, rgba(45,90,45,0.65), rgba(26,51,26,0.75));
+}
+
+.tech-blocked {
+  opacity: 0.48;
+}
 
 /* ───── Actions ──────────────────────────────────── */
 #actions {
@@ -317,6 +447,105 @@ button:active {
   box-shadow: 0 0 8px rgba(63,185,80,0.2);
 }
 
+/* ───── Events ───────────────────────────────────── */
+#events .placeholder {
+  color: var(--dim);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+#eventPanel {
+  display: grid;
+  gap: 7px;
+}
+
+.event-title {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+#eventPanel p {
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.event-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.event-choice {
+  text-align: left;
+  padding: 7px 9px;
+}
+
+.event-choice small {
+  display: block;
+  color: var(--dim);
+  font-size: 0.68rem;
+  margin-top: 2px;
+}
+
+/* ───── Audio controls ───────────────────────────── */
+#audioPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.audio-row {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--dim);
+}
+
+.audio-row label {
+  min-width: 0;
+}
+
+.audio-row select {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+.audio-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.audio-actions {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+#btnMute {
+  padding: 6px 10px;
+}
+
+#btnMute[aria-pressed="true"] {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+#audioState {
+  min-width: 0;
+  color: var(--dim);
+  font-size: 0.72rem;
+  text-align: right;
+}
+
 /* ───── Minimap ──────────────────────────────────── */
 #minimapBox { padding: 10px 14px; }
 
@@ -337,7 +566,8 @@ button:active {
   overflow: hidden;
 }
 
-#logContent {
+#logContent,
+#eventLog {
   font-size: 0.72rem;
   color: var(--dim);
   max-height: 160px;
@@ -345,14 +575,62 @@ button:active {
   line-height: 1.45;
 }
 
-#logContent .log-entry {
+#logContent .log-entry,
+#eventLog .log-entry {
   padding: 2px 0;
   border-bottom: 1px solid rgba(48,54,61,0.3);
 }
 
-#logContent .log-combat { color: var(--danger); }
-#logContent .log-build  { color: var(--accent2); }
-#logContent .log-move   { color: var(--accent); }
+#logContent .log-combat,
+#eventLog .log-combat { color: var(--danger); }
+#logContent .log-build,
+#eventLog .log-build  { color: var(--accent2); }
+#logContent .log-move,
+#eventLog .log-move   { color: var(--accent); }
+#logContent .log-good,
+#eventLog .log-good   { color: var(--accent2); }
+#logContent .log-event,
+#eventLog .log-event  { color: var(--gold); }
+#logContent .log-trade,
+#eventLog .log-trade  { color: var(--gold); }
+
+/* ───── Resources & Trade ────────────────────────── */
+.trade-group {
+  display: grid;
+  gap: 3px;
+  padding: 3px 0 6px;
+}
+
+.trade-label {
+  color: var(--dim);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.trade-list {
+  color: var(--text);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+#btnTrade {
+  margin-top: 4px;
+  width: 100%;
+}
+
+#btnTrade:disabled {
+  cursor: default;
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+.trade-status {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
 
 /* ───── UX overlays ──────────────────────────────── */
 .overlay {
@@ -493,6 +771,41 @@ button:active {
   font-size: 0.68rem;
 }
 
+#tooltip .tt-resource {
+  margin-top: 4px;
+  color: var(--gold);
+  font-size: 0.7rem;
+}
+
+#tooltip .tt-camp {
+  color: var(--gold);
+  font-size: 0.7rem;
+  margin-top: 4px;
+}
+
+#tooltip .tt-combat {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(139,148,158,0.28);
+  display: grid;
+  gap: 3px;
+}
+
+#tooltip .tt-combat strong {
+  color: var(--gold);
+  font-size: 0.72rem;
+}
+
+#tooltip .tt-combat span {
+  color: var(--text);
+  line-height: 1.35;
+}
+
+#tooltip .tt-combat small {
+  color: var(--dim);
+  line-height: 1.3;
+}
+
 /* ───── Scrollbar ────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -501,12 +814,19 @@ button:active {
 
 /* ───── Responsive ───────────────────────────────── */
 @media (max-width: 700px) {
+  header { flex-wrap: wrap; }
+  #topResources {
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
+  }
   main { flex-direction: column; }
   #sidebar {
     width: 100%;
     flex-direction: row;
     flex-wrap: wrap;
-    max-height: 140px;
+    max-height: min(38vh, 260px);
     overflow-y: auto;
   }
   #sidebar section { flex: 1; min-width: 120px; }
