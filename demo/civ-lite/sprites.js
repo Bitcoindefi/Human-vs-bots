@@ -244,6 +244,39 @@ function drawDesertTile(seed = 88) {
   return c;
 }
 
+function drawTundraTile(seed = 99) {
+  const c = offscreen();
+  const ctx = c.getContext('2d');
+  const rng = seededRandom(seed);
+  const g = ctx.createLinearGradient(0, 0, 0, SPRITE_SIZE);
+  g.addColorStop(0, '#8ba08d'); g.addColorStop(0.5, '#74876f'); g.addColorStop(1, '#5e705f');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+  ctx.fillStyle = 'rgba(225,235,225,0.22)';
+  for (let i = 0; i < 10; i++) {
+    ctx.beginPath();
+    ctx.ellipse(rng() * SPRITE_SIZE, rng() * SPRITE_SIZE, 3 + rng() * 9, 1 + rng() * 3, rng() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
+function drawSnowTile(seed = 101) {
+  const c = offscreen();
+  const ctx = c.getContext('2d');
+  const rng = seededRandom(seed);
+  const g = ctx.createLinearGradient(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+  g.addColorStop(0, '#dce8ed'); g.addColorStop(0.55, '#cbd9df'); g.addColorStop(1, '#edf4f7');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
+  ctx.strokeStyle = 'rgba(150,170,180,0.18)';
+  for (let i = 0; i < 7; i++) {
+    const y = rng() * SPRITE_SIZE;
+    ctx.beginPath(); ctx.moveTo(0, y);
+    ctx.quadraticCurveTo(SPRITE_SIZE * 0.5, y + (rng() - 0.5) * 10, SPRITE_SIZE, y + (rng() - 0.5) * 8);
+    ctx.stroke();
+  }
+  return c;
+}
+
 function drawWarriorSprite(color, isBot = false) {
   const c = offscreen(48, 48);
   const ctx = c.getContext('2d');
@@ -401,17 +434,32 @@ function drawResourceIcon(type) {
 const UNCIV = './assets/unciv/';
 
 /** Terrain type → Unciv sprite filename mapping (4 variants each) */
-const TERRAIN_FILES = {
-  plains:  ['Grassland.png', 'Plains.png', 'Grassland_Farm.png', 'Plains_Farm.png'],
-  forest:  ['Forest.png', 'GrasslandForest.png', 'PlainsForest.png', 'TundraForest.png'],
-  hill:    ['Hill.png', 'Mountain.png', 'Hill.png', 'Hill.png'],
-  water:   ['Coast.png', 'Lakes.png', 'Coast.png', 'Lakes.png'],
-  desert:  ['Desert.png', 'Desert_Farm.png', 'Oasis.png', 'Desert.png'],
+export const TERRAIN_FILES = {
+  ocean: ['Lakes.png', 'Coast.png', 'Lakes.png', 'Coast.png'],
+  coast: ['Coast.png', 'Lakes.png', 'Coast.png', 'Oasis.png'],
+  plains: ['Plains.png', 'Plains_Farm.png', 'Grassland.png', 'Grassland_Farm.png'],
+  grassland: ['Grassland.png', 'Grassland_Farm.png', 'Plains.png', 'Plains_Farm.png'],
+  forest: ['Forest.png', 'GrasslandForest.png', 'PlainsForest.png', 'TundraForest.png'],
+  jungle: ['Jungle.png', 'PlainsJungle.png', 'Forest.png', 'GrasslandForest.png'],
+  hill: ['Hill.png', 'Mine.png', 'Quarry.png', 'Hill.png'],
+  mountain: ['Mountain.png', 'Hill.png', 'Mountain.png', 'Mine.png'],
+  desert: ['Desert.png', 'Desert_Farm.png', 'Oasis.png', 'Desert.png'],
+  tundra: ['Tundra.png', 'TundraForest.png', 'Forest.png', 'Tundra.png'],
+  snow: ['Snow.png', 'Ice.png', 'Snow.png', 'Tundra.png'],
 };
 
 const TERRAIN_FALLBACK = {
-  plains: drawPlainsTile, forest: drawForestTile, hill: drawHillTile,
-  water: drawWaterTile, desert: drawDesertTile,
+  ocean: drawWaterTile,
+  coast: drawWaterTile,
+  plains: drawPlainsTile,
+  grassland: drawPlainsTile,
+  forest: drawForestTile,
+  jungle: drawForestTile,
+  hill: drawHillTile,
+  mountain: drawHillTile,
+  desert: drawDesertTile,
+  tundra: drawTundraTile,
+  snow: drawSnowTile,
 };
 
 export async function buildSpriteAtlas() {
@@ -421,7 +469,7 @@ export async function buildSpriteAtlas() {
   const terrain = {};
   const terrainPromises = [];
 
-  for (const type of ['plains', 'forest', 'hill', 'water', 'desert']) {
+  for (const type of Object.keys(TERRAIN_FILES)) {
     terrain[type] = new Array(4);
     const files = TERRAIN_FILES[type];
 
