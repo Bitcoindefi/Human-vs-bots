@@ -44,6 +44,7 @@
       <section id="actions">
         <button id="btnEndTurn">End Turn (E)</button>
         <button id="btnCenter">Center (C)</button>
+        <button id="btnHelp">Help</button>
       </section>
 
       <section id="minimapBox">
@@ -57,6 +58,42 @@
       </section>
     </aside>
   </main>
+
+  <div id="mainMenu" class="overlay">
+    <div class="overlay-panel">
+      <p class="eyebrow">CIV Lite</p>
+      <h2>Human vs Bots</h2>
+      <p class="overlay-copy">Build momentum, scout the map, and break the rival empire before it out-produces you.</p>
+      <div class="overlay-actions">
+        <button id="btnStartGame">Start Game</button>
+        <button id="btnMenuTutorial">Tutorial</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tutorialPanel" class="tutorial-panel" hidden>
+    <div class="tutorial-head">
+      <h2>Tutorial</h2>
+      <button id="btnCloseTutorial" aria-label="Close tutorial">×</button>
+    </div>
+    <ol>
+      <li>Select your unit, then click a highlighted land tile to move.</li>
+      <li>End the turn to collect food, production, and science from Athens.</li>
+      <li>Attack adjacent enemy units and capture Babylon to win.</li>
+    </ol>
+  </div>
+
+  <div id="gameOver" class="overlay overlay-hidden">
+    <div class="overlay-panel">
+      <p class="eyebrow" id="outcomeEyebrow">Game Over</p>
+      <h2 id="outcomeTitle">Result</h2>
+      <p class="overlay-copy" id="outcomeSummary">The match has ended.</p>
+      <div class="overlay-actions">
+        <button id="btnRestartGame">Restart</button>
+        <button id="btnGameOverTutorial">Tutorial</button>
+      </div>
+    </div>
+  </div>
 
   <div id="tooltip"></div>
 
