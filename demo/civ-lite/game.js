@@ -17,6 +17,12 @@ import {
   summarizeCityYield,
   summarizeEmpire,
 } from './civ-model.js';
+import {
+  applyCombatResult,
+  calculateCombatPreview,
+  formatCombatPreview,
+  getUnitProfile,
+} from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 import {
   createUxState,
@@ -250,26 +256,57 @@ function calcReachable(unit) {
 }
 
 // ─── Combat ─────────────────────────────────────────
+// Adapt the civ-model tile-object map into the terrain-string grid that
+// combat-model.js expects (its TERRAIN_COMBAT table keys on terrain strings,
+// using 'water' for ocean/coast tiles).
+function combatTerrainAt(x, y) {
+  const terrain = S.map[y]?.[x]?.terrain;
+  if (!terrain) return 'plains';
+  return isWaterTerrain(terrain) ? 'water' : terrain;
+}
+
+function combatTerrainMap() {
+  return S.map.map((row, y) => row.map((_, x) => combatTerrainAt(x, y)));
+}
+
+function crossesRiver(attacker, defender) {
+  return combatTerrainAt(defender.x, attacker.y) === 'water'
+    || combatTerrainAt(attacker.x, defender.y) === 'water';
+}
+
+function previewCombat(attacker, defender) {
+  return calculateCombatPreview(attacker, defender, {
+    map: combatTerrainMap(),
+    units: S.units,
+    crossesRiver: crossesRiver(attacker, defender),
+  });
+}
+
 function combat(attacker, defender) {
-  const defTerrain = S.map[defender.y][defender.x].terrain;
-  const defBonus = TERRAIN_DEFENSE[defTerrain] || 0;
-  const dmg = Math.max(5, attacker.atk - defender.def * (1 + defBonus) * 0.5 + Math.random() * 10);
-  defender.hp -= Math.round(dmg);
-  // Counter-attack
-  if (defender.hp > 0) {
-    const counterDmg = Math.max(2, defender.atk * 0.4 - attacker.def * 0.3 + Math.random() * 5);
-    attacker.hp -= Math.round(counterDmg);
-    log(`Counter! ${attacker.type} takes ${Math.round(counterDmg)} dmg`, 'combat');
+  const preview = previewCombat(attacker, defender);
+  if (!preview.inRange) {
+    log(`${defender.type} is out of ${attacker.type} range`, 'combat');
+    return;
   }
+
+  const result = applyCombatResult(attacker, defender, preview);
   spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
-  log(`${attacker.owner}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
-  if (defender.hp <= 0) {
+  log(`${attacker.owner}'s ${attacker.type} hits for ${preview.attackerDamage} dmg`, 'combat');
+
+  if (preview.defenderDamage > 0) {
+    log(`Counter! ${attacker.type} takes ${preview.defenderDamage} dmg`, 'combat');
+  }
+  if (result.attackerPromoted) {
+    log(`${attacker.type} promoted to level ${attacker.level}!`, 'build');
+  }
+
+  if (result.defenderDestroyed) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
     spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
-  if (attacker.hp <= 0) {
+  if (result.attackerDestroyed) {
     S.units = S.units.filter(u => u !== attacker);
     log(`${attacker.owner}'s ${attacker.type} destroyed!`, 'combat');
     checkWin();
@@ -348,8 +385,23 @@ function gatherResources(owner) {
           spawnX = nx; spawnY = ny; break;
         }
       }
-      S.units.push({ id, owner, x: spawnX, y: spawnY, hp: 100, atk: 28, def: 15, mov: 2, movLeft: 2, type: 'warrior' });
-      log(`${city.name} trained a warrior!`, 'build');
+      const type = owner === 'player' && id % 3 === 0 ? 'archer' : 'warrior';
+      const profile = getUnitProfile({ type });
+      S.units.push({
+        id,
+        owner,
+        x: spawnX,
+        y: spawnY,
+        hp: 100,
+        atk: profile.strength,
+        def: profile.defense,
+        mov: 2,
+        movLeft: 2,
+        type,
+        xp: 0,
+        level: 1,
+      });
+      log(`${city.name} trained a ${type}!`, 'build');
       if (owner === 'player') revealAround(spawnX, spawnY);
     }
   }
@@ -440,9 +492,8 @@ function botTurn() {
     }
     if (!bestTarget) continue;
 
-    // Check if adjacent to a player unit (attack)
-    const adj = S.units.find(u => u.owner === 'player' &&
-      Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y) === 1);
+    // Check if a player unit is in tactical range.
+    const adj = S.units.find(u => u.owner === 'player' && previewCombat(bot, u).inRange);
     if (adj) {
       combat(bot, adj);
       bot.movLeft = 0;
@@ -959,17 +1010,21 @@ function updateUnitPanel() {
     dom.unitDet.innerHTML = '<p class="placeholder">Click a unit or city to see details</p>';
     return;
   }
+  const profile = getUnitProfile(u);
   const hpClass = u.hp > 60 ? 'hp-high' : u.hp > 30 ? 'hp-mid' : 'hp-low';
   dom.unitDet.innerHTML = `
     <div class="unit-info-header">
       <canvas class="unit-icon" id="unitIcon" width="32" height="32"></canvas>
-      <span class="unit-name">${u.type.charAt(0).toUpperCase() + u.type.slice(1)}</span>
+      <span class="unit-name">${profile.label}</span>
     </div>
     <div class="unit-info-stats">
       <span class="stat-label">HP</span><span class="stat-val ${hpClass}">${u.hp}/100</span>
       <span class="stat-label">ATK</span><span class="stat-val">${u.atk}</span>
       <span class="stat-label">DEF</span><span class="stat-val">${u.def}</span>
       <span class="stat-label">MOV</span><span class="stat-val">${u.movLeft}/${u.mov}</span>
+      <span class="stat-label">RNG</span><span class="stat-val">${profile.range}</span>
+      <span class="stat-label">XP</span><span class="stat-val">${u.xp ?? 0}/10</span>
+      <span class="stat-label">LVL</span><span class="stat-val">${u.level ?? 1}</span>
     </div>`;
   // Draw tiny icon
   const ic = document.getElementById('unitIcon');
@@ -989,6 +1044,17 @@ function showTooltip(x, y, tileX, tileY) {
   const terrain = tile.terrain;
   const yields = getTileYield(tile);
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const target = S.units.find(u => u.owner !== 'player' && u.x === tileX && u.y === tileY);
+  const preview = S.selected && target ? previewCombat(S.selected, target) : null;
+  const modifierLabels = preview?.modifiers.length
+    ? `<small>${preview.modifiers.map(mod => mod.label).join(' • ')}</small>`
+    : '';
+  const combatHtml = preview ? `
+    <div class="tt-combat">
+      <strong>Combat preview</strong>
+      <span>${formatCombatPreview(preview)}</span>
+      ${modifierLabels}
+    </div>` : '';
   tooltip.innerHTML = `
     <div class="tt-title">${describeTile(tile)}${def ? ' (+' + def + '% def)' : ''}</div>
     <div class="tt-yields">
@@ -996,7 +1062,8 @@ function showTooltip(x, y, tileX, tileY) {
       <span>⚒️${yields.prod}</span>
       <span>🔬${yields.science}</span>
       <span>💰${yields.gold}</span>
-    </div>`;
+    </div>
+    ${combatHtml}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';
@@ -1114,7 +1181,7 @@ function handleClick(tx, ty) {
   // Move / attack with selected unit
   if (S.selected && S.selected.movLeft > 0) {
     const enemy = S.units.find(u => u.owner === 'bot' && u.x === tx && u.y === ty);
-    if (enemy && Math.abs(enemy.x - S.selected.x) + Math.abs(enemy.y - S.selected.y) === 1) {
+    if (enemy && previewCombat(S.selected, enemy).inRange) {
       combat(S.selected, enemy);
       S.selected.movLeft = 0;
       S.reachable.clear();
@@ -1141,7 +1208,7 @@ function handleClick(tx, ty) {
               const sel = S.selected;
               animateMove(sel, movePath, () => {
                 sel.movLeft = movLeft;
-                combat(sel, blocker);
+                if (previewCombat(sel, blocker).inRange) combat(sel, blocker);
                 sel.movLeft = 0;
                 S.reachable.clear();
                 updateUnitPanel();
@@ -1149,7 +1216,7 @@ function handleClick(tx, ty) {
               });
               return;
             } else {
-              combat(S.selected, blocker);
+              if (previewCombat(S.selected, blocker).inRange) combat(S.selected, blocker);
               S.selected.movLeft = 0;
             }
           }
