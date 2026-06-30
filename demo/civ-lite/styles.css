@@ -357,6 +357,47 @@ button:active {
   box-shadow: 0 0 8px rgba(63,185,80,0.2);
 }
 
+/* ───── Events ───────────────────────────────────── */
+#events .placeholder {
+  color: var(--dim);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+#eventPanel {
+  display: grid;
+  gap: 7px;
+}
+
+.event-title {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+#eventPanel p {
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.event-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.event-choice {
+  text-align: left;
+  padding: 7px 9px;
+}
+
+.event-choice small {
+  display: block;
+  color: var(--dim);
+  font-size: 0.68rem;
+  margin-top: 2px;
+}
+
 /* ───── Audio controls ───────────────────────────── */
 #audioPanel {
   display: flex;
@@ -458,6 +499,8 @@ button:active {
 #eventLog .log-move   { color: var(--accent); }
 #logContent .log-good,
 #eventLog .log-good   { color: var(--accent2); }
+#logContent .log-event,
+#eventLog .log-event  { color: var(--gold); }
 
 /* ───── UX overlays ──────────────────────────────── */
 .overlay {
@@ -590,6 +633,12 @@ button:active {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+#tooltip .tt-camp {
+  color: var(--gold);
+  font-size: 0.7rem;
+  margin-top: 4px;
 }
 
 #tooltip .tt-combat {
