@@ -9,6 +9,7 @@ import {
   CIV_COLORS,
   RESOURCE_TYPES,
   TERRAIN_DEFENSE,
+  TERRAIN_YIELDS as TERRAIN_YIELD,
   claimTerritory,
   computeVisibility,
   createCivState,
@@ -25,6 +26,16 @@ import {
   getUnitProfile,
 } from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  activeTradeYield,
+  advanceTradeRoutes,
+  collectEmpireResources,
+  createTradeRoute,
+  formatYield,
+  generateResourceMap,
+  resourceAt,
+  summarizeResourceList,
+} from './resource-model.js';
 import {
   applyEventChoice,
   buildRandomEvent,
@@ -87,6 +98,10 @@ const dom = {
   goldRate: document.getElementById('goldRate'),
   currentTech: document.getElementById('currentTech'),
   techList: document.getElementById('techList'),
+  strategic: document.getElementById('strategicList'),
+  luxury: document.getElementById('luxuryList'),
+  tradeStatus: document.getElementById('tradeStatus'),
+  tradeBtn: document.getElementById('btnTrade'),
   unitDet: document.getElementById('contextPanel') || document.getElementById('unitDetails'),
   eventPanel: document.getElementById('eventPanel'),
   logBox:  document.getElementById('eventLog') || document.getElementById('logContent'),
@@ -230,6 +245,9 @@ const S = {
   units: initialCiv.units,
   cities: initialCiv.cities,
   resources: initialCiv.resources,
+  resourceTiles: [],
+  empireResources: { player: null, bot: null },
+  tradeRoutes: [],
   camps: [],
   pendingEvent: null,
   eventHistory: new Set(),
@@ -258,6 +276,13 @@ const S = {
   reachable: new Set(),
   tileVariants: [],
 };
+
+S.resourceTiles = generateResourceMap({
+  map: S.map,
+  cities: S.cities,
+  width: MAP_W,
+  height: MAP_H,
+});
 
 function createUnit(id, owner, x, y, type = 'warrior') {
   const stats = UNIT_STATS[type] || UNIT_STATS.warrior;
@@ -351,8 +376,77 @@ function refreshVision() {
 
 initializeNeutralCamps();
 refreshVision();
+refreshEmpireResourceState();
+updateResourcePanel();
 dom.status.textContent = 'Ready';
 renderUx();
+
+// ─── Resource & trade helpers ──────────────────────
+function refreshEmpireResourceState() {
+  S.empireResources.player = collectEmpireResources({
+    owner: 'player',
+    cities: S.cities,
+    map: S.map,
+    resources: S.resourceTiles,
+    terrainYield: TERRAIN_YIELD,
+  });
+  S.empireResources.bot = collectEmpireResources({
+    owner: 'bot',
+    cities: S.cities,
+    map: S.map,
+    resources: S.resourceTiles,
+    terrainYield: TERRAIN_YIELD,
+  });
+}
+
+function updateResourcePanel() {
+  const playerState = S.empireResources.player;
+  if (!playerState) return;
+
+  dom.strategic.textContent = summarizeResourceList(playerState.categories.strategic);
+  dom.luxury.textContent = summarizeResourceList(playerState.categories.luxury);
+
+  const activeRoutes = S.tradeRoutes.filter(route => route.turnsLeft > 0);
+  if (activeRoutes.length) {
+    const route = activeRoutes[0];
+    dom.tradeStatus.textContent = `${route.exportResource} for ${route.importResource}: +${formatYield(route.playerYield)} for ${route.turnsLeft} turns.`;
+    dom.tradeBtn.disabled = true;
+    return;
+  }
+
+  const route = createTradeRoute({
+    playerState: S.empireResources.player,
+    botState: S.empireResources.bot,
+    turn: S.turn,
+  });
+  dom.tradeBtn.disabled = route === null;
+  dom.tradeStatus.textContent = route
+    ? `Available: export ${route.exportResource} for ${route.importResource}.`
+    : 'Need distinct controlled resources for trade.';
+}
+
+function openTradeRoute() {
+  refreshEmpireResourceState();
+  if (S.tradeRoutes.some(route => route.turnsLeft > 0)) {
+    updateResourcePanel();
+    return;
+  }
+
+  const route = createTradeRoute({
+    playerState: S.empireResources.player,
+    botState: S.empireResources.bot,
+    turn: S.turn,
+  });
+  if (!route) {
+    log('No resource trade is available yet.', 'trade');
+    updateResourcePanel();
+    return;
+  }
+
+  S.tradeRoutes.push(route);
+  log(`Trade route opened: ${route.exportResource} for ${route.importResource}.`, 'trade');
+  updateResourcePanel();
+}
 
 // ─── Pathfinding (A*) ───────────────────────────────
 function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
@@ -520,8 +614,21 @@ function updateParticles() {
 
 // ─── City production ────────────────────────────────
 function gatherResources(owner) {
+  S.empireResources[owner] = collectEmpireResources({
+    owner,
+    cities: S.cities,
+    map: S.map,
+    resources: S.resourceTiles,
+    terrainYield: TERRAIN_YIELD,
+  });
+
   const cities = S.cities.filter(c => c.owner === owner);
   let totalFood = 0, totalProd = 0, totalSci = 0, totalGold = 0;
+  const tradeYield = activeTradeYield(S.tradeRoutes, owner);
+  totalFood += tradeYield.food;
+  totalProd += tradeYield.prod;
+  totalSci += tradeYield.sci;
+  let firstCity = true;
   for (const city of cities) {
     const cityYield = summarizeCityYield(S, city);
     totalFood += cityYield.food;
@@ -531,6 +638,12 @@ function gatherResources(owner) {
 
     city.food += cityYield.food;
     city.prod += cityYield.prod;
+
+    if (firstCity) {
+      city.food += tradeYield.food;
+      city.prod += tradeYield.prod;
+      firstCity = false;
+    }
 
     // City growth
     if (city.food >= 8 * city.pop) {
@@ -578,6 +691,7 @@ function gatherResources(owner) {
   S.resources[owner].prod += totalProd;
   S.resources[owner].science += totalSci;
   S.resources[owner].gold += totalGold;
+  updateResourcePanel();
   return { food: totalFood, prod: totalProd, science: totalSci, gold: totalGold };
 }
 
@@ -791,6 +905,12 @@ function startPlayerTurn() {
 function botTurn() {
   const botRes = gatherResources('bot');
   completeResearch('bot', botRes.science);
+  const routesBefore = S.tradeRoutes.length;
+  S.tradeRoutes = advanceTradeRoutes(S.tradeRoutes);
+  if (routesBefore > 0 && S.tradeRoutes.length === 0) {
+    log('Trade route completed.', 'trade');
+  }
+  updateResourcePanel();
   const bots = S.units.filter(u => u.owner === 'bot');
 
   for (const bot of bots) {
@@ -1109,6 +1229,39 @@ function drawLayerTerrain() {
   }
 }
 
+// Layer 0.5: Strategic and luxury resources
+function drawLayerResources() {
+  for (const resource of S.resourceTiles) {
+    if (S.fog[resource.y][resource.x] === 0) continue;
+    const px = resource.x * TILE + TILE / 2;
+    const py = resource.y * TILE + TILE / 2;
+    const radius = resource.category === 'luxury' ? 7 : 6;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.arc(px + 1, py + 1, radius + 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = resource.marker;
+    ctx.beginPath();
+    if (resource.category === 'luxury') {
+      ctx.moveTo(px, py - radius);
+      ctx.lineTo(px + radius, py);
+      ctx.lineTo(px, py + radius);
+      ctx.lineTo(px - radius, py);
+      ctx.closePath();
+    } else {
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
+    ctx.fillStyle = '#07111f';
+    ctx.font = `bold ${9 / S.zoom}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.fillText(resource.name.charAt(0), px, py + 3 / S.zoom);
+  }
+}
+
 // Layer 1: Grid overlay
 function drawLayerGrid() {
   const vw = viewW(), vh = viewH();
@@ -1396,6 +1549,14 @@ function drawMinimap() {
     }
   }
 
+  for (const resource of S.resourceTiles) {
+    if (S.fog[resource.y][resource.x] === 0) continue;
+    miniCtx.fillStyle = resource.marker;
+    miniCtx.beginPath();
+    miniCtx.arc(resource.x * tw + tw / 2, resource.y * th + th / 2, Math.max(tw, th) * 0.35, 0, Math.PI * 2);
+    miniCtx.fill();
+  }
+
   // Units & cities on minimap
   for (const camp of S.camps) {
     if (camp.cleared || S.fog[camp.y][camp.x] === 0) continue;
@@ -1490,6 +1651,10 @@ function showTooltip(x, y, tileX, tileY) {
   const terrain = tile.terrain;
   const yields = getTileYield(tile);
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const resource = resourceAt(S.resourceTiles, tileX, tileY);
+  const resourceLine = resource
+    ? `<div class="tt-resource">${resource.name} (${resource.category}) +${formatYield(resource.yield)}</div>`
+    : '';
   const camp = findActiveCampAt(tileX, tileY);
   const campText = camp
     ? `<div class="tt-camp">${camp.name}: clear for +4 prod, +2 science</div>`
@@ -1513,6 +1678,7 @@ function showTooltip(x, y, tileX, tileY) {
       <span>🔬${yields.science}</span>
       <span>💰${yields.gold}</span>
     </div>
+    ${resourceLine}
     ${campText}
     ${combatHtml}`;
   tooltip.style.display = 'block';
@@ -1767,6 +1933,7 @@ document.getElementById('btnCenter').addEventListener('click', () => {
     centerOn(u.x, u.y);
   }
 });
+dom.tradeBtn.addEventListener('click', openTradeRoute);
 document.getElementById('btnHelp').addEventListener('click', () => setTutorial());
 document.getElementById('btnStartGame').addEventListener('click', beginGame);
 document.getElementById('btnMenuTutorial').addEventListener('click', () => setTutorial());
@@ -1799,6 +1966,7 @@ function gameLoop(now) {
   ctx.scale(S.zoom, S.zoom);
   ctx.translate(-S.camX, -S.camY);
   drawLayerTerrain();
+  drawLayerResources();
   drawLayerGrid();
   drawLayerReachable();
   drawLayerPath();

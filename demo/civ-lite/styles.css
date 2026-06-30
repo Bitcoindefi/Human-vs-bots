@@ -501,6 +501,46 @@ button:active {
 #eventLog .log-good   { color: var(--accent2); }
 #logContent .log-event,
 #eventLog .log-event  { color: var(--gold); }
+#logContent .log-trade,
+#eventLog .log-trade  { color: var(--gold); }
+
+/* ───── Resources & Trade ────────────────────────── */
+.trade-group {
+  display: grid;
+  gap: 3px;
+  padding: 3px 0 6px;
+}
+
+.trade-label {
+  color: var(--dim);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.trade-list {
+  color: var(--text);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+#btnTrade {
+  margin-top: 4px;
+  width: 100%;
+}
+
+#btnTrade:disabled {
+  cursor: default;
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+.trade-status {
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
 
 /* ───── UX overlays ──────────────────────────────── */
 .overlay {
@@ -633,6 +673,12 @@ button:active {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+#tooltip .tt-resource {
+  margin-top: 4px;
+  color: var(--gold);
+  font-size: 0.7rem;
 }
 
 #tooltip .tt-camp {
