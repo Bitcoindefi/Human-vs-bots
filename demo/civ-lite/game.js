@@ -25,6 +25,17 @@ import {
 } from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 import {
+  TECH_TREE,
+  advanceResearch,
+  chooseBotResearch,
+  createResearchState,
+  getAvailableTechs,
+  getTech,
+  getTechStatus,
+  getUnlockedContent,
+  selectResearch,
+} from './tech-model.js';
+import {
   createUxState,
   describeOutcome,
   startGame,
@@ -38,6 +49,12 @@ const ZOOM_MIN = 0.4, ZOOM_MAX = 3, ZOOM_SPEED = 0.08;
 const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
 const PAN_SPEED = 500;  // WASD px/sec (world units)
 const SIGHT = 2;
+const UNIT_STATS = {
+  warrior: { atk: 30, def: 15, mov: 2 },
+  archer: { atk: 24, def: 12, mov: 2 },
+  swordsman: { atk: 38, def: 18, mov: 2 },
+  horseman: { atk: 34, def: 14, mov: 3 },
+};
 
 // ─── DOM refs ───────────────────────────────────────
 const canvas  = document.getElementById('gameCanvas');
@@ -58,6 +75,8 @@ const dom = {
   scienceRate: document.getElementById('scienceRate'),
   gold: document.getElementById('gold'),
   goldRate: document.getElementById('goldRate'),
+  currentTech: document.getElementById('currentTech'),
+  techList: document.getElementById('techList'),
   unitDet: document.getElementById('contextPanel') || document.getElementById('unitDetails'),
   logBox:  document.getElementById('eventLog') || document.getElementById('logContent'),
   menu:    document.getElementById('mainMenu'),
@@ -141,6 +160,11 @@ const S = {
   camX: 0, camY: 0,
   zoom: 1, targetZoom: 1,
   nextId: 3,
+  research: {
+    player: selectResearch(createResearchState(), 'mining'),
+    bot: createResearchState(),
+  },
+  botPersonality: 'military',
   // Visual state
   particles: [],
   waterPhase: 0,
@@ -151,6 +175,11 @@ const S = {
   reachable: new Set(),
   tileVariants: [],
 };
+
+function createUnit(id, owner, x, y, type = 'warrior') {
+  const stats = UNIT_STATS[type] || UNIT_STATS.warrior;
+  return { id, owner, x, y, hp: 100, atk: stats.atk, def: stats.def, mov: stats.mov, movLeft: stats.mov, type };
+}
 
 // Init fog
 for (let y = 0; y < MAP_H; y++) {
@@ -385,7 +414,7 @@ function gatherResources(owner) {
           spawnX = nx; spawnY = ny; break;
         }
       }
-      const type = owner === 'player' && id % 3 === 0 ? 'archer' : 'warrior';
+      const type = chooseUnitToTrain(owner);
       const profile = getUnitProfile({ type });
       S.units.push({
         id,
@@ -441,6 +470,85 @@ function updateHud() {
   }
 }
 
+function chooseUnitToTrain(owner) {
+  const unlocks = getUnlockedContent(S.research[owner]);
+  if (unlocks.units.includes('horseman')) return 'horseman';
+  if (unlocks.units.includes('swordsman')) return 'swordsman';
+  if (unlocks.units.includes('archer')) return 'archer';
+  return 'warrior';
+}
+
+function completeResearch(owner, sciencePerTurn) {
+  if (owner === 'bot' && !S.research.bot.current) {
+    const next = chooseBotResearch(S.research.bot, S.botPersonality);
+    if (next) S.research.bot = selectResearch(S.research.bot, next);
+  }
+
+  const before = S.research[owner].current;
+  const result = advanceResearch(S.research[owner], sciencePerTurn);
+  S.research[owner] = result.state;
+
+  if (result.completed.length > 0) {
+    for (const techId of result.completed) {
+      const tech = getTech(techId);
+      log(`${owner === 'player' ? 'You' : 'Bot'} researched ${tech.name}!`, 'build');
+    }
+    if (owner === 'player') updateTechPanel();
+  } else if (before && owner === 'player') {
+    updateTechPanel();
+  }
+
+  if (owner === 'bot' && !S.research.bot.current) {
+    const next = chooseBotResearch(S.research.bot, S.botPersonality);
+    if (next) S.research.bot = selectResearch(S.research.bot, next);
+  }
+}
+
+function researchProgressLabel(state) {
+  if (!state.current) return 'Choose research';
+  const tech = getTech(state.current);
+  return `${tech.name}: ${state.progress}/${tech.cost} 🔬`;
+}
+
+function updateTechPanel() {
+  if (!dom.currentTech || !dom.techList) return;
+  dom.currentTech.textContent = researchProgressLabel(S.research.player);
+  dom.techList.innerHTML = '';
+
+  for (const tech of TECH_TREE) {
+    const status = getTechStatus(S.research.player, tech.id);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `tech-card tech-${status}`;
+    row.disabled = status === 'blocked' || status === 'researched';
+    row.dataset.tech = tech.id;
+    row.innerHTML = `
+      <span class="tech-name">${tech.name}</span>
+      <span class="tech-status">${status.replace('-', ' ')}</span>
+      <span class="tech-cost">🔬 ${tech.cost}</span>
+      <span class="tech-unlocks">${formatUnlocks(tech.unlocks)}</span>`;
+    row.addEventListener('click', () => {
+      try {
+        S.research.player = selectResearch(S.research.player, tech.id);
+        log(`Research started: ${tech.name}`, 'build');
+        updateTechPanel();
+      } catch (error) {
+        log(error.message, 'combat');
+      }
+    });
+    dom.techList.append(row);
+  }
+}
+
+function formatUnlocks(unlocks) {
+  const parts = [
+    ...(unlocks.units || []).map((item) => `Unit: ${item}`),
+    ...(unlocks.buildings || []).map((item) => `Building: ${item}`),
+    ...(unlocks.improvements || []).map((item) => `Improvement: ${item}`),
+  ];
+  return parts.join(' · ') || 'Economy';
+}
+
 // ─── Turn management ────────────────────────────────
 function endPlayerTurn() {
   if (S.phase !== 'player') return;
@@ -454,6 +562,7 @@ function endPlayerTurn() {
   updateUnitPanel();
 
   const res = gatherResources('player');
+  completeResearch('player', res.science);
   updateHud();
   log(`Income: +${res.food} food, +${res.prod} prod, +${res.science} science, +${res.gold} gold`, 'build');
 
@@ -470,12 +579,14 @@ function startPlayerTurn() {
   refreshVision();
   claimTerritory(S.map, S.cities);
   updateHud();
+  updateTechPanel();
   log(`─── Turn ${S.turn} ───`);
 }
 
 // ─── Bot AI ─────────────────────────────────────────
 function botTurn() {
-  gatherResources('bot');
+  const botRes = gatherResources('bot');
+  completeResearch('bot', botRes.science);
   const bots = S.units.filter(u => u.owner === 'bot');
 
   for (const bot of bots) {
@@ -1384,5 +1495,6 @@ function gameLoop(now) {
   updateHud();
   updateUnitPanel();
   log('Sprites loaded — game starting!', 'good');
+  updateTechPanel();
   requestAnimationFrame(gameLoop);
 })();
