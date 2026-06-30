@@ -25,6 +25,45 @@
     <canvas id="gameCanvas"></canvas>
 
     <aside id="sidebar">
+      <section id="setupPanel">
+        <h3>Game Setup</h3>
+        <label class="setup-field">
+          <span>Map</span>
+          <select id="setupMapSize">
+            <option value="compact">Compact</option>
+            <option value="standard" selected>Standard</option>
+            <option value="wide">Wide</option>
+          </select>
+        </label>
+        <label class="setup-field">
+          <span>Civs</span>
+          <select id="setupCivs">
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
+        <label class="setup-field">
+          <span>Difficulty</span>
+          <select id="setupDifficulty">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label class="setup-field">
+          <span>Seed</span>
+          <input id="setupSeed" type="number" min="1" value="1">
+        </label>
+        <div class="victory-row">
+          <label><input id="victoryDomination" type="checkbox" checked> Dom</label>
+          <label><input id="victoryTerritory" type="checkbox" checked> Terr</label>
+          <label><input id="victoryScience" type="checkbox" checked> Sci</label>
+        </div>
+        <button id="btnStartSetup">Start Game</button>
+        <div id="setupRoster"></div>
+      </section>
+
       <section id="resources">
         <h3>Empire</h3>
         <div class="res-row"><span class="res-icon">🌾</span> Food <span class="res-total" data-source="food">0</span><small data-source="foodRate">+0</small></div>

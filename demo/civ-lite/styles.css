@@ -436,6 +436,72 @@ button:active {
   transform: scale(0.97);
 }
 
+#setupPanel {
+  display: grid;
+  gap: 7px;
+}
+
+.setup-field {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--dim);
+}
+
+.setup-field select,
+.setup-field input {
+  min-width: 0;
+  background: #0f1520;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 7px;
+  font: inherit;
+}
+
+.victory-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--dim);
+}
+
+.victory-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#setupRoster {
+  display: grid;
+  gap: 4px;
+  font-size: 0.7rem;
+}
+
+.civ-row {
+  display: grid;
+  grid-template-columns: 10px 1fr 62px 42px;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+}
+
+.civ-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.15);
+}
+
+.diplo-row {
+  color: var(--dim);
+  font-size: 0.68rem;
+  padding-left: 15px;
+}
+
 #btnEndTurn {
   background: linear-gradient(180deg, #224422 0%, #1a331a 100%);
   border-color: #2d5a2d;

@@ -5,6 +5,12 @@
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
 import {
+  createDiplomacy,
+  createGameSetup,
+  getPersonalityPlan,
+  getRelation,
+} from './setup-model.js';
+import {
   advanceFeedback,
   createCombatFeedback,
   createFloatingText,
@@ -77,7 +83,8 @@ import {
 } from './ux-model.js';
 
 // ─── Constants ──────────────────────────────────────
-const MAP_W = 24, MAP_H = 16, TILE = 48;
+let MAP_W = 24, MAP_H = 16;
+const TILE = 48;
 const ZOOM_MIN = 0.4, ZOOM_MAX = 3, ZOOM_SPEED = 0.08;
 const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
 const PAN_SPEED = 500;  // WASD px/sec (world units)
@@ -106,6 +113,15 @@ const dom = {
   prod:    document.getElementById('prod'),
   prodRate: document.getElementById('prodRate'),
   science: document.getElementById('science'),
+  setupMap: document.getElementById('setupMapSize'),
+  setupCivs: document.getElementById('setupCivs'),
+  setupDifficulty: document.getElementById('setupDifficulty'),
+  setupSeed: document.getElementById('setupSeed'),
+  setupDomination: document.getElementById('victoryDomination'),
+  setupTerritory: document.getElementById('victoryTerritory'),
+  setupScience: document.getElementById('victoryScience'),
+  setupRoster: document.getElementById('setupRoster'),
+  btnStartSetup: document.getElementById('btnStartSetup'),
   cityDet: document.getElementById('cityDetails'),
   scienceRate: document.getElementById('scienceRate'),
   gold: document.getElementById('gold'),
@@ -252,9 +268,31 @@ function restartGame() {
 // ─── Seeded RNG for tile variants ───────────────────
 function hashTile(x, y) { return ((x * 374761393 + y * 668265263) ^ 1274126177) >>> 0; }
 
+// ─── Setup (player vs bot) ──────────────────────────
+// The setup screen lets the player tune map size, seed, difficulty and
+// victory conditions. The core engine (combat, resources, research,
+// barbarians) operates on the canonical player/bot owner model, so the
+// civ roster is always Athens (player) + Babylon (bot).
+function buildCivs(setup) {
+  return [
+    { id: 'player', name: 'Athens', owner: 'player', personality: 'human', color: CIV_COLORS.player },
+    { id: 'bot', name: 'Babylon', owner: 'bot', personality: 'aggressive', color: CIV_COLORS.bot },
+  ];
+}
+
+function buildDiplomacy(civs) {
+  return createDiplomacy(civs.map(civ => ({ id: civ.id })));
+}
+
+const DEFAULT_SETUP = createGameSetup();
+const DEFAULT_CIVS = buildCivs(DEFAULT_SETUP);
+
 // ─── State ──────────────────────────────────────────
 const initialCiv = createCivState({ width: MAP_W, height: MAP_H, seed: 17 });
 const S = {
+  setup: DEFAULT_SETUP,
+  civs: DEFAULT_CIVS,
+  diplomacy: buildDiplomacy(DEFAULT_CIVS),
   map: initialCiv.map,
   units: initialCiv.units,
   cities: initialCiv.cities.map((city) => createCity(city)),
@@ -293,6 +331,19 @@ const S = {
   tileVariants: [],
 };
 
+function resetVisibilityState() {
+  S.fog = [];
+  S.tileVariants = [];
+  for (let y = 0; y < MAP_H; y++) {
+    S.fog[y] = [];
+    S.tileVariants[y] = [];
+    for (let x = 0; x < MAP_W; x++) {
+      S.fog[y][x] = 0;
+      S.tileVariants[y][x] = hashTile(x, y) % 4;
+    }
+  }
+}
+
 S.resourceTiles = generateResourceMap({
   map: S.map,
   cities: S.cities,
@@ -306,14 +357,7 @@ function createUnit(id, owner, x, y, type = 'warrior') {
 }
 
 // Init fog
-for (let y = 0; y < MAP_H; y++) {
-  S.fog[y] = [];
-  S.tileVariants[y] = [];
-  for (let x = 0; x < MAP_W; x++) {
-    S.fog[y][x] = 0;
-    S.tileVariants[y][x] = hashTile(x, y) % 4;
-  }
-}
+resetVisibilityState();
 
 function updateEmpireHud() {
   dom.food.textContent = Math.max(0, S.empire.food);
@@ -397,6 +441,37 @@ updateResourcePanel();
 updateCityPanel();
 dom.status.textContent = 'Ready';
 renderUx();
+
+// ─── Civ roster helpers ────────────────────────────
+function getCiv(owner) {
+  return S.civs.find(civ => civ.id === owner) || {
+    id: owner,
+    name: owner,
+    personality: 'aggressive',
+    color: '#ff5555',
+  };
+}
+
+function ownerName(owner) {
+  return getCiv(owner).name;
+}
+
+function isPlayerOwner(owner) {
+  return owner === 'player';
+}
+
+function isAiOwner(owner) {
+  return !isPlayerOwner(owner);
+}
+
+function areAtWar(ownerA, ownerB) {
+  if (ownerA === ownerB) return false;
+  return getRelation(S.diplomacy, ownerA, ownerB).status === 'war';
+}
+
+function isPlayerEnemy(unit) {
+  return unit && areAtWar('player', unit.owner);
+}
 
 // ─── Resource & trade helpers ──────────────────────
 function refreshEmpireResourceState() {
@@ -561,7 +636,6 @@ function combat(attacker, defender) {
     log(`${defender.type} is out of ${attacker.type} range`, 'combat');
     return;
   }
-
   playAudioEvent(AUDIO_EVENTS.attack);
 
   const result = applyCombatResult(attacker, defender, preview);
@@ -584,17 +658,17 @@ function combat(attacker, defender) {
   }
   if (result.attackerDestroyed) {
     S.units = S.units.filter(u => u !== attacker);
-    log(`${attacker.owner}'s ${attacker.type} destroyed!`, 'combat');
+    log(`${ownerName(attacker.owner)}'s ${attacker.type} destroyed!`, 'combat');
     checkWin();
   }
 }
 
 function checkWin() {
   const playerUnits = S.units.filter(u => u.owner === 'player');
-  const botUnits    = S.units.filter(u => u.owner === 'bot');
+  const enemyUnits  = S.units.filter(u => isAiOwner(u.owner));
   const playerCities = S.cities.filter(c => c.owner === 'player');
-  const botCities    = S.cities.filter(c => c.owner === 'bot');
-  if (botUnits.length === 0 && botCities.length === 0) {
+  const enemyCities  = S.cities.filter(c => isAiOwner(c.owner));
+  if (S.setup.victories.domination && enemyUnits.length === 0 && enemyCities.length === 0) {
     playAudioEvent(AUDIO_EVENTS.victory);
     finishGame('victory');
   } else if (playerUnits.length === 0 && playerCities.length === 0) {
@@ -915,6 +989,116 @@ function resolveEventChoice(choiceId) {
   renderEventPanel();
 }
 
+function readSetupOptions() {
+  return {
+    mapSize: dom.setupMap?.value || S.setup.mapSize,
+    civCount: dom.setupCivs?.value || S.setup.civCount,
+    difficulty: dom.setupDifficulty?.value || S.setup.difficulty,
+    seed: dom.setupSeed?.value || S.setup.seed,
+    victories: {
+      domination: dom.setupDomination?.checked ?? S.setup.victories.domination,
+      territory: dom.setupTerritory?.checked ?? S.setup.victories.territory,
+      science: dom.setupScience?.checked ?? S.setup.victories.science,
+    },
+  };
+}
+
+function applyGameSetup(options = readSetupOptions()) {
+  const setup = createGameSetup(options);
+  MAP_W = setup.map.width;
+  MAP_H = setup.map.height;
+
+  // The core engine runs on the canonical player/bot model. The setup screen
+  // drives map size, seed and difficulty; the civ roster stays player + bot.
+  const civs = buildCivs(setup);
+  const seedNumber = Number.isFinite(setup.seed) ? setup.seed : 17;
+  const civState = createCivState({ width: MAP_W, height: MAP_H, seed: seedNumber });
+
+  S.setup = setup;
+  S.civs = civs;
+  S.diplomacy = buildDiplomacy(civs);
+  S.map = civState.map;
+  S.units = civState.units;
+  S.cities = civState.cities.map(city => createCity(city));
+  S.resources = civState.resources;
+  S.empireResources = { player: null, bot: null };
+  S.tradeRoutes = [];
+  S.camps = [];
+  S.pendingEvent = null;
+  S.eventHistory = new Set();
+  S.empire = { food: 0, prod: 0, science: 0 };
+  S.research = {
+    player: selectResearch(createResearchState(), 'mining'),
+    bot: createResearchState(),
+  };
+  S.turn = 1;
+  S.phase = 'player';
+  S.selected = null;
+  S.selectedCity = null;
+  S.camX = 0;
+  S.camY = 0;
+  S.zoom = 1;
+  S.targetZoom = 1;
+  S.nextId = 3;
+  S.particles = [];
+  S.hoverTile = null;
+  S.animating = null;
+  S.path = [];
+  S.reachable = new Set();
+
+  resetVisibilityState();
+  S.resourceTiles = generateResourceMap({
+    map: S.map,
+    cities: S.cities,
+    width: MAP_W,
+    height: MAP_H,
+  });
+  initializeNeutralCamps();
+  refreshVision();
+  refreshEmpireResourceState();
+  claimTerritory(S.map, S.cities);
+
+  const playerStart = S.cities.find(c => c.owner === 'player') || S.units.find(u => u.owner === 'player');
+  if (playerStart) centerOn(playerStart.x, playerStart.y);
+
+  dom.turn.textContent = 'Turn 1';
+  dom.status.textContent = 'Your turn';
+  dom.status.className = '';
+  dom.food.textContent = '0';
+  dom.prod.textContent = '0';
+  dom.science.textContent = '0';
+  dom.logBox.replaceChildren();
+  updateUnitPanel();
+  updateResourcePanel();
+  updateCityPanel();
+  updateHud();
+  renderSetupRoster();
+  log(`Started ${setup.map.label} game (${setup.difficulty}), seed ${setup.seed}.`, 'build');
+}
+
+function renderSetupRoster() {
+  if (!dom.setupRoster) return;
+  const civRows = S.civs.map(civ => {
+    const relation = civ.id === 'player' ? 'player' : getRelation(S.diplomacy, 'player', civ.id).status;
+    const plan = getPersonalityPlan(civ.personality);
+    return `<div class="civ-row">
+      <span class="civ-swatch" style="background:${civ.color}"></span>
+      <span>${civ.name}</span>
+      <span>${plan.label}</span>
+      <span>${relation}</span>
+    </div>`;
+  }).join('');
+  const aiCivs = S.civs.filter(civ => isAiOwner(civ.id));
+  const diplomacyRows = [];
+  for (let i = 0; i < aiCivs.length; i++) {
+    for (let j = i + 1; j < aiCivs.length; j++) {
+      const relation = getRelation(S.diplomacy, aiCivs[i].id, aiCivs[j].id);
+      diplomacyRows.push(`<div class="diplo-row">${aiCivs[i].name} - ${aiCivs[j].name}: ${relation.status}</div>`);
+    }
+  }
+  dom.setupRoster.innerHTML = civRows + diplomacyRows.join('');
+}
+
 // ─── Turn management ────────────────────────────────
 function endPlayerTurn() {
   if (S.phase !== 'player') return;
@@ -957,6 +1141,30 @@ function startPlayerTurn() {
 }
 
 // ─── Bot AI ─────────────────────────────────────────
+function findBotTarget(bot) {
+  const plan = getPersonalityPlan(getCiv(bot.owner).personality);
+  for (const targetType of plan.targetOrder) {
+    const targets = targetType === 'unit'
+      ? S.units.filter(u => areAtWar(bot.owner, u.owner))
+      : S.cities.filter(c => areAtWar(bot.owner, c.owner));
+    const target = nearestTarget(bot, targets);
+    if (target) return target;
+  }
+  return null;
+}
+
+function nearestTarget(unit, targets) {
+  let bestTarget = null, bestDist = Infinity;
+  for (const target of targets) {
+    const d = Math.abs(target.x - unit.x) + Math.abs(target.y - unit.y);
+    if (d < bestDist) {
+      bestDist = d;
+      bestTarget = { x: target.x, y: target.y };
+    }
+  }
+  return bestTarget;
+}
+
 function botTurn() {
   const botRes = gatherResources('bot');
   completeResearch('bot', botRes.science);
@@ -970,16 +1178,7 @@ function botTurn() {
 
   for (const bot of bots) {
     bot.movLeft = bot.mov;
-    // Find nearest player target (units or cities)
-    let bestTarget = null, bestDist = Infinity;
-    for (const u of S.units.filter(u => u.owner === 'player')) {
-      const d = Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y);
-      if (d < bestDist) { bestDist = d; bestTarget = { x: u.x, y: u.y }; }
-    }
-    for (const c of S.cities.filter(c => c.owner === 'player')) {
-      const d = Math.abs(c.x - bot.x) + Math.abs(c.y - bot.y);
-      if (d < bestDist) { bestDist = d; bestTarget = { x: c.x, y: c.y }; }
-    }
+    const bestTarget = findBotTarget(bot);
     if (!bestTarget) continue;
 
     // Check if a hostile unit is in tactical range.
@@ -1384,10 +1583,11 @@ function drawLayerCities() {
     if (S.fog[city.y][city.x] === 0) continue;
     const px = city.x * TILE + TILE / 2;
     const py = city.y * TILE + TILE / 2;
-    const sprite = city.owner === 'player' ? ATLAS.cities.player : ATLAS.cities.bot;
+    const civ = getCiv(city.owner);
+    const sprite = isPlayerOwner(city.owner) ? ATLAS.cities.player : ATLAS.cities.bot;
     ctx.drawImage(sprite, px - 28, py - 28, 56, 56);
 
-    const bannerColor = city.owner === 'player' ? CIV_COLORS.player : CIV_COLORS.bot;
+    const bannerColor = civ.color || (city.owner === 'player' ? CIV_COLORS.player : CIV_COLORS.bot);
     ctx.fillStyle = 'rgba(7,11,20,0.78)';
     ctx.fillRect(px - 30, py + 19, 60, 13);
     ctx.strokeStyle = bannerColor;
@@ -1485,7 +1685,7 @@ function drawLayerUnits() {
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, unit.hp / 100);
 
     // Movement pips
-    if (unit.owner === 'player') {
+    if (isPlayerOwner(unit.owner)) {
       for (let i = 0; i < unit.mov; i++) {
         ctx.fillStyle = i < unit.movLeft ? '#5af0aa' : '#333';
         ctx.beginPath();
@@ -1645,7 +1845,7 @@ function drawMinimap() {
     miniCtx.fillRect(camp.x * tw, camp.y * th, tw * 1.5, th * 1.5);
   }
   for (const city of S.cities) {
-    miniCtx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff4444';
+    miniCtx.fillStyle = getCiv(city.owner).color;
     miniCtx.fillRect(city.x * tw, city.y * th, tw * 2, th * 2);
   }
   for (const unit of S.units) {
@@ -1698,6 +1898,7 @@ function updateUnitPanel() {
     dom.unitDet.innerHTML = '<p class="placeholder">Click a unit or city to see details</p>';
     return;
   }
+  const civ = getCiv(u.owner);
   const profile = getUnitProfile(u);
   const hpClass = u.hp > 60 ? 'hp-high' : u.hp > 30 ? 'hp-mid' : 'hp-low';
   dom.unitDet.innerHTML = `
@@ -1706,6 +1907,8 @@ function updateUnitPanel() {
       <span class="unit-name">${profile.label}</span>
     </div>
     <div class="unit-info-stats">
+      <span class="stat-label">CIV</span><span class="stat-val" style="color:${civ.color}">${civ.name}</span>
+      <span class="stat-label">AI</span><span class="stat-val">${civ.personality}</span>
       <span class="stat-label">HP</span><span class="stat-val ${hpClass}">${u.hp}/100</span>
       <span class="stat-label">ATK</span><span class="stat-val">${u.atk}</span>
       <span class="stat-label">DEF</span><span class="stat-val">${u.def}</span>
@@ -2077,6 +2280,8 @@ document.getElementById('btnCenter').addEventListener('click', () => {
     centerOn(u.x, u.y);
   }
 });
+dom.btnStartSetup?.addEventListener('click', () => applyGameSetup());
+renderSetupRoster();
 dom.cityDet.addEventListener('click', e => {
   const btn = e.target.closest('[data-building]');
   if (!btn) return;
