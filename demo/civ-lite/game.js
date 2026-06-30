@@ -4,6 +4,12 @@
    Inspired by Freeciv-web layers, C7 terrain system,
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
+import {
+  advanceFeedback,
+  createCombatFeedback,
+  createFloatingText,
+  createScreenShake,
+} from './feedback-model.js';
 import { AUDIO_EVENTS, createAudioSystem } from './audio-model.js';
 import {
   CIV_COLORS,
@@ -276,6 +282,8 @@ const S = {
   botPersonality: 'military',
   // Visual state
   particles: [],
+  floatingTexts: [],
+  screenShake: createScreenShake(0, 0),
   waterPhase: 0,
   selectionPhase: 0,
   hoverTile: null,
@@ -557,10 +565,11 @@ function combat(attacker, defender) {
   playAudioEvent(AUDIO_EVENTS.attack);
 
   const result = applyCombatResult(attacker, defender, preview);
-  spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
+  addCombatFeedback(defender, preview.attackerDamage, result.defenderDestroyed);
   log(`${attacker.owner}'s ${attacker.type} hits for ${preview.attackerDamage} dmg`, 'combat');
 
   if (preview.defenderDamage > 0) {
+    addCombatFeedback(attacker, preview.defenderDamage, result.attackerDestroyed);
     log(`Counter! ${attacker.type} takes ${preview.defenderDamage} dmg`, 'combat');
   }
   if (result.attackerPromoted) {
@@ -571,7 +580,6 @@ function combat(attacker, defender) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
     if (defender.owner === 'barbarian') clearCampIfPresent(defender.x, defender.y, attacker);
-    spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
   if (result.attackerDestroyed) {
@@ -619,6 +627,41 @@ function updateParticles() {
     p.size *= 0.97;
   }
   S.particles = S.particles.filter(p => p.life > 0);
+}
+
+function addCombatFeedback(unit, damage, destroyed) {
+  const x = unit.x * TILE + TILE / 2;
+  const y = unit.y * TILE + TILE / 2;
+  const feedback = createCombatFeedback({ x, y, damage, destroyed });
+  S.floatingTexts.push(...feedback.texts);
+  S.screenShake = feedback.shake;
+  spawnParticles(x, y, feedback.particleCount);
+}
+
+function addCaptureFeedback(city) {
+  const x = city.x * TILE + TILE / 2;
+  const y = city.y * TILE + TILE / 2;
+  S.floatingTexts.push(createFloatingText({ x, y: y - 18, text: 'Captured!', kind: 'capture' }));
+  S.screenShake = createScreenShake(6, 0.2);
+  spawnParticles(x, y, 18);
+}
+
+function updateFeedback(dt) {
+  const next = advanceFeedback({ texts: S.floatingTexts, shake: S.screenShake }, dt);
+  S.floatingTexts = next.texts;
+  S.screenShake = next.shake;
+}
+
+function getShakeOffset(now) {
+  if (!S.screenShake || S.screenShake.time <= 0 || S.screenShake.intensity <= 0) {
+    return { x: 0, y: 0 };
+  }
+
+  const phase = now * 0.05;
+  return {
+    x: Math.sin(phase * 2.1) * S.screenShake.intensity,
+    y: Math.cos(phase * 1.6) * S.screenShake.intensity,
+  };
 }
 
 // ─── City production ────────────────────────────────
@@ -948,6 +991,7 @@ function botTurn() {
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
       if (cap) {
         cap.owner = 'bot';
+        addCaptureFeedback(cap);
         claimTerritory(S.map, S.cities);
         updateHud();
         log(`Bot captured ${cap.name}!`, 'combat');
@@ -981,6 +1025,7 @@ function botTurn() {
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
       if (cap) {
         cap.owner = 'bot';
+        addCaptureFeedback(cap);
         claimTerritory(S.map, S.cities);
         updateHud();
         log(`Bot captured ${cap.name}!`, 'combat');
@@ -1527,6 +1572,22 @@ function drawLayerParticles() {
   ctx.globalAlpha = 1;
 }
 
+function drawLayerFloatingTexts() {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const text of S.floatingTexts) {
+    const alpha = Math.max(0, Math.min(1, text.life / text.maxLife));
+    ctx.globalAlpha = alpha;
+    ctx.font = `bold ${14 / S.zoom}px system-ui`;
+    ctx.lineWidth = 3 / S.zoom;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(text.text, text.x, text.y);
+    ctx.fillStyle = text.color;
+    ctx.fillText(text.text, text.x, text.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
 // ─── Minimap ────────────────────────────────────────
 function drawMinimap() {
   const mw = miniC.width, mh = miniC.height;
@@ -1939,6 +2000,7 @@ function handleClick(tx, ty) {
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
           if (cap) {
             cap.owner = 'player';
+            addCaptureFeedback(cap);
             Object.assign(cap, createCity(cap));
             claimTerritory(S.map, S.cities);
             updateHud();
@@ -2052,6 +2114,7 @@ function gameLoop(now) {
   S.waterPhase += dt * 2;
   S.selectionPhase += dt * 3;
   updateParticles();
+  updateFeedback(dt);
 
   // Clear
   ctx.fillStyle = '#070b14';
@@ -2059,6 +2122,8 @@ function gameLoop(now) {
 
   // Render all layers with zoom transform
   ctx.save();
+  const shake = getShakeOffset(now);
+  ctx.translate(shake.x, shake.y);
   ctx.scale(S.zoom, S.zoom);
   ctx.translate(-S.camX, -S.camY);
   drawLayerTerrain();
@@ -2072,6 +2137,7 @@ function gameLoop(now) {
   drawLayerFog();
   drawLayerHover();
   drawLayerParticles();
+  drawLayerFloatingTexts();
   ctx.restore();
 
   // Minimap (screen-space, no zoom)
