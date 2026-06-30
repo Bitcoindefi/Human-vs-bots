@@ -52,6 +52,33 @@
         <button id="btnHelp">Help</button>
       </section>
 
+      <section id="audioPanel">
+        <h3>Audio</h3>
+        <div class="audio-row">
+          <label for="audioTheme">Theme</label>
+          <select id="audioTheme">
+            <option value="game">Game</option>
+            <option value="menu">Menu</option>
+          </select>
+        </div>
+        <div class="audio-row">
+          <label for="masterVolume">Master</label>
+          <input id="masterVolume" type="range" min="0" max="100" value="75">
+        </div>
+        <div class="audio-row">
+          <label for="musicVolume">Music</label>
+          <input id="musicVolume" type="range" min="0" max="100" value="55">
+        </div>
+        <div class="audio-row">
+          <label for="sfxVolume">SFX</label>
+          <input id="sfxVolume" type="range" min="0" max="100" value="80">
+        </div>
+        <div class="audio-actions">
+          <button id="btnMute" type="button" aria-pressed="false">Mute</button>
+          <span id="audioState">Ready</span>
+        </div>
+      </section>
+
       <section id="minimapBox">
         <h3>Map</h3>
         <canvas id="minimap"></canvas>
