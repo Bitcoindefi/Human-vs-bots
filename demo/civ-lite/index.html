@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CIV Lite – Human vs Bots</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,6 +12,13 @@
     <h1>⚔️ CIV Lite</h1>
     <span id="turnLabel">Turn 1</span>
     <span id="status">Your turn</span>
+    <span id="turnState">1 city · 1 unit</span>
+    <nav id="topResources" aria-label="Empire resources">
+      <span class="top-res"><span class="res-icon">🌾</span><b id="food">0</b><small id="foodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">⚒️</span><b id="prod">0</b><small id="prodRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">🔬</span><b id="science">0</b><small id="scienceRate">+0</small></span>
+      <span class="top-res"><span class="res-icon">💰</span><b id="gold">0</b><small id="goldRate">+0</small></span>
+    </nav>
   </header>
 
   <main>
@@ -19,21 +27,23 @@
     <aside id="sidebar">
       <section id="resources">
         <h3>Empire</h3>
-        <div class="res-row"><span class="res-icon">🌾</span> Food <span id="food">0</span></div>
-        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span id="prod">0</span></div>
-        <div class="res-row"><span class="res-icon">🔬</span> Science <span id="science">0</span></div>
+        <div class="res-row"><span class="res-icon">🌾</span> Food <span class="res-total" data-source="food">0</span><small data-source="foodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">⚒️</span> Prod <span class="res-total" data-source="prod">0</span><small data-source="prodRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">🔬</span> Science <span class="res-total" data-source="science">0</span><small data-source="scienceRate">+0</small></div>
+        <div class="res-row"><span class="res-icon">💰</span> Gold <span class="res-total" data-source="gold">0</span><small data-source="goldRate">+0</small></div>
       </section>
 
       <section id="unitInfo">
-        <h3>Selected Unit</h3>
-        <div id="unitDetails">
-          <p class="placeholder">Click a unit to see details</p>
+        <h3>Context</h3>
+        <div id="contextPanel">
+          <p class="placeholder">Click a unit or city to see details</p>
         </div>
       </section>
 
       <section id="actions">
-        <button id="btnEndTurn">End Turn (E)</button>
+        <button id="btnEndTurn">Next Turn (Enter/E)</button>
         <button id="btnCenter">Center (C)</button>
+        <button id="btnHelp">Help</button>
       </section>
 
       <section id="minimapBox">
@@ -42,11 +52,47 @@
       </section>
 
       <section id="log">
-        <h3>Log</h3>
-        <div id="logContent"></div>
+        <h3>Turn Log</h3>
+        <div id="eventLog"></div>
       </section>
     </aside>
   </main>
+
+  <div id="mainMenu" class="overlay">
+    <div class="overlay-panel">
+      <p class="eyebrow">CIV Lite</p>
+      <h2>Human vs Bots</h2>
+      <p class="overlay-copy">Build momentum, scout the map, and break the rival empire before it out-produces you.</p>
+      <div class="overlay-actions">
+        <button id="btnStartGame">Start Game</button>
+        <button id="btnMenuTutorial">Tutorial</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tutorialPanel" class="tutorial-panel" hidden>
+    <div class="tutorial-head">
+      <h2>Tutorial</h2>
+      <button id="btnCloseTutorial" aria-label="Close tutorial">×</button>
+    </div>
+    <ol>
+      <li>Select your unit, then click a highlighted land tile to move.</li>
+      <li>End the turn to collect food, production, and science from Athens.</li>
+      <li>Attack adjacent enemy units and capture Babylon to win.</li>
+    </ol>
+  </div>
+
+  <div id="gameOver" class="overlay overlay-hidden">
+    <div class="overlay-panel">
+      <p class="eyebrow" id="outcomeEyebrow">Game Over</p>
+      <h2 id="outcomeTitle">Result</h2>
+      <p class="overlay-copy" id="outcomeSummary">The match has ended.</p>
+      <div class="overlay-actions">
+        <button id="btnRestartGame">Restart</button>
+        <button id="btnGameOverTutorial">Tutorial</button>
+      </div>
+    </div>
+  </div>
 
   <div id="tooltip"></div>
 

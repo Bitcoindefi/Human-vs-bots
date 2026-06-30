@@ -4,7 +4,33 @@
    Inspired by Freeciv-web layers, C7 terrain system,
    and Unciv tile groups.
    ───────────────────────────────────────────────────── */
+import {
+  CIV_COLORS,
+  RESOURCE_TYPES,
+  TERRAIN_DEFENSE,
+  claimTerritory,
+  computeVisibility,
+  createCivState,
+  describeTile,
+  getTileYield,
+  isWaterTerrain,
+  summarizeCityYield,
+  summarizeEmpire,
+} from './civ-model.js';
+import {
+  applyCombatResult,
+  calculateCombatPreview,
+  formatCombatPreview,
+  getUnitProfile,
+} from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  createUxState,
+  describeOutcome,
+  startGame,
+  toggleTutorial,
+  updateOutcome,
+} from './ux-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -12,15 +38,6 @@ const ZOOM_MIN = 0.4, ZOOM_MAX = 3, ZOOM_SPEED = 0.08;
 const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
 const PAN_SPEED = 500;  // WASD px/sec (world units)
 const SIGHT = 2;
-const TERRAIN_TYPES = ['plains', 'forest', 'hill', 'water', 'desert'];
-const TERRAIN_YIELD = {
-  plains: { food: 2, prod: 1, sci: 0 },
-  forest: { food: 1, prod: 2, sci: 0 },
-  hill:   { food: 0, prod: 2, sci: 1 },
-  water:  { food: 3, prod: 0, sci: 0 },
-  desert: { food: 0, prod: 1, sci: 1 },
-};
-const TERRAIN_DEFENSE = { plains: 0, forest: 0.25, hill: 0.35, water: 0, desert: 0 };
 
 // ─── DOM refs ───────────────────────────────────────
 const canvas  = document.getElementById('gameCanvas');
@@ -32,11 +49,23 @@ const tooltip = document.getElementById('tooltip');
 const dom = {
   turn:    document.getElementById('turnLabel'),
   status:  document.getElementById('status'),
+  turnState: document.getElementById('turnState'),
   food:    document.getElementById('food'),
+  foodRate: document.getElementById('foodRate'),
   prod:    document.getElementById('prod'),
+  prodRate: document.getElementById('prodRate'),
   science: document.getElementById('science'),
-  unitDet: document.getElementById('unitDetails'),
-  logBox:  document.getElementById('logContent'),
+  scienceRate: document.getElementById('scienceRate'),
+  gold: document.getElementById('gold'),
+  goldRate: document.getElementById('goldRate'),
+  unitDet: document.getElementById('contextPanel') || document.getElementById('unitDetails'),
+  logBox:  document.getElementById('eventLog') || document.getElementById('logContent'),
+  menu:    document.getElementById('mainMenu'),
+  gameOver: document.getElementById('gameOver'),
+  tutorial: document.getElementById('tutorialPanel'),
+  outcomeEyebrow: document.getElementById('outcomeEyebrow'),
+  outcomeTitle: document.getElementById('outcomeTitle'),
+  outcomeSummary: document.getElementById('outcomeSummary'),
 };
 
 // ─── Build sprite atlas (async) ─────────────────────
@@ -51,56 +80,63 @@ function log(msg, cls = '') {
   while (dom.logBox.children.length > 60) dom.logBox.lastChild.remove();
 }
 
+// ─── UX flow ───────────────────────────────────────
+function renderUx() {
+  dom.menu.classList.toggle('overlay-hidden', S.ux.screen !== 'menu');
+  dom.gameOver.classList.toggle('overlay-hidden', S.ux.screen !== 'gameover');
+  dom.tutorial.hidden = !S.ux.tutorialOpen;
+
+  if (S.ux.outcome) {
+    const isVictory = S.ux.outcome.result === 'victory';
+    dom.outcomeEyebrow.textContent = isVictory ? 'Campaign Won' : 'Campaign Lost';
+    dom.outcomeTitle.textContent = isVictory ? 'Victory' : 'Defeat';
+    dom.outcomeSummary.textContent = `${describeOutcome(S.ux)}. ${isVictory ? 'Babylon can no longer contest the map.' : 'Athens has fallen out of contention.'}`;
+  }
+}
+
+function beginGame() {
+  S.ux = startGame(S.ux);
+  S.phase = 'player';
+  dom.status.textContent = 'Your turn';
+  dom.status.className = '';
+  log('Campaign started.', 'build');
+  renderUx();
+}
+
+function setTutorial(open = null) {
+  S.ux = toggleTutorial(S.ux, open);
+  renderUx();
+}
+
+function finishGame(result) {
+  S.phase = 'gameover';
+  S.ux = updateOutcome(S.ux, result, S.turn);
+  const isVictory = result === 'victory';
+  dom.status.textContent = isVictory ? '🎉 Victory!' : '💀 Defeat';
+  dom.status.className = isVictory ? 'status-win' : 'status-lose';
+  log(isVictory ? '*** VICTORY! ***' : '*** DEFEAT ***', isVictory ? 'build' : 'combat');
+  renderUx();
+}
+
+function restartGame() {
+  window.location.reload();
+}
+
 // ─── Seeded RNG for tile variants ───────────────────
 function hashTile(x, y) { return ((x * 374761393 + y * 668265263) ^ 1274126177) >>> 0; }
 
-// ─── Map generation ─────────────────────────────────
-function generateMap() {
-  const map = [];
-  for (let y = 0; y < MAP_H; y++) {
-    const row = [];
-    for (let x = 0; x < MAP_W; x++) {
-      const n = noise(x, y);
-      let t;
-      if (n < 0.2) t = 'water';
-      else if (n < 0.38) t = 'plains';
-      else if (n < 0.55) t = 'forest';
-      else if (n < 0.7) t = 'hill';
-      else t = 'desert';
-      row.push(t);
-    }
-    map.push(row);
-  }
-  // Ensure starting positions are on land
-  for (let dy = -1; dy <= 1; dy++)
-    for (let dx = -1; dx <= 1; dx++) {
-      const y1 = 2 + dy, x1 = 2 + dx;
-      const y2 = MAP_H - 3 + dy, x2 = MAP_W - 3 + dx;
-      if (map[y1][x1] === 'water') map[y1][x1] = 'plains';
-      if (map[y2][x2] === 'water') map[y2][x2] = 'plains';
-    }
-  return map;
-}
-
-function noise(x, y) {
-  const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-  return s - Math.floor(s);
-}
-
 // ─── State ──────────────────────────────────────────
+const initialCiv = createCivState({ width: MAP_W, height: MAP_H, seed: 17 });
 const S = {
-  map: generateMap(),
-  units: [
-    { id: 1, owner: 'player', x: 2, y: 2, hp: 100, atk: 30, def: 15, mov: 2, movLeft: 2, type: 'warrior' },
-    { id: 2, owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, hp: 100, atk: 28, def: 18, mov: 2, movLeft: 2, type: 'warrior' },
-  ],
-  cities: [
-    { owner: 'player', x: 2, y: 2, name: 'Athens', food: 0, prod: 0, pop: 1 },
-    { owner: 'bot',    x: MAP_W - 3, y: MAP_H - 3, name: 'Babylon', food: 0, prod: 0, pop: 1 },
-  ],
+  map: initialCiv.map,
+  units: initialCiv.units,
+  cities: initialCiv.cities,
+  resources: initialCiv.resources,
   turn: 1,
-  phase: 'player',  // player | bot | animating | gameover
+  phase: 'menu',  // menu | player | bot | animating | gameover
+  ux: createUxState(),
   selected: null,
+  selectedCity: null,
   fog: [],           // 0=unknown, 1=seen, 2=visible
   camX: 0, camY: 0,
   zoom: 1, targetZoom: 1,
@@ -142,12 +178,19 @@ function fadeVision() {
 }
 
 function refreshVision() {
-  fadeVision();
-  S.units.filter(u => u.owner === 'player').forEach(u => revealAround(u.x, u.y));
-  S.cities.filter(c => c.owner === 'player').forEach(c => revealAround(c.x, c.y));
+  S.fog = computeVisibility({
+    width: MAP_W,
+    height: MAP_H,
+    previousFog: S.fog,
+    units: S.units,
+    cities: S.cities,
+    owner: 'player',
+  });
 }
 
 refreshVision();
+dom.status.textContent = 'Ready';
+renderUx();
 
 // ─── Pathfinding (A*) ───────────────────────────────
 function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
@@ -155,17 +198,17 @@ function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
 function neighbors(x, y) {
   const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
   return dirs.map(([dx, dy]) => ({ x: x + dx, y: y + dy }))
-    .filter(p => p.x >= 0 && p.x < MAP_W && p.y >= 0 && p.y < MAP_H && S.map[p.y][p.x] !== 'water');
+    .filter(p => p.x >= 0 && p.x < MAP_W && p.y >= 0 && p.y < MAP_H && !isWaterTerrain(S.map[p.y][p.x].terrain));
 }
 
 function moveCost(tx, ty) {
-  const t = S.map[ty][tx];
-  if (t === 'hill' || t === 'forest') return 2;
+  const t = S.map[ty][tx].terrain;
+  if (t === 'hill' || t === 'forest' || t === 'jungle' || t === 'mountain' || t === 'snow') return 2;
   return 1;
 }
 
 function findPath(sx, sy, gx, gy) {
-  if (S.map[gy][gx] === 'water') return [];
+  if (isWaterTerrain(S.map[gy][gx].terrain)) return [];
   const key = (x, y) => x + ',' + y;
   const open = [{ x: sx, y: sy, g: 0, f: heuristic({ x: sx, y: sy }, { x: gx, y: gy }) }];
   const came = {}, gScore = { [key(sx, sy)]: 0 };
@@ -213,26 +256,57 @@ function calcReachable(unit) {
 }
 
 // ─── Combat ─────────────────────────────────────────
+// Adapt the civ-model tile-object map into the terrain-string grid that
+// combat-model.js expects (its TERRAIN_COMBAT table keys on terrain strings,
+// using 'water' for ocean/coast tiles).
+function combatTerrainAt(x, y) {
+  const terrain = S.map[y]?.[x]?.terrain;
+  if (!terrain) return 'plains';
+  return isWaterTerrain(terrain) ? 'water' : terrain;
+}
+
+function combatTerrainMap() {
+  return S.map.map((row, y) => row.map((_, x) => combatTerrainAt(x, y)));
+}
+
+function crossesRiver(attacker, defender) {
+  return combatTerrainAt(defender.x, attacker.y) === 'water'
+    || combatTerrainAt(attacker.x, defender.y) === 'water';
+}
+
+function previewCombat(attacker, defender) {
+  return calculateCombatPreview(attacker, defender, {
+    map: combatTerrainMap(),
+    units: S.units,
+    crossesRiver: crossesRiver(attacker, defender),
+  });
+}
+
 function combat(attacker, defender) {
-  const defTerrain = S.map[defender.y][defender.x];
-  const defBonus = TERRAIN_DEFENSE[defTerrain] || 0;
-  const dmg = Math.max(5, attacker.atk - defender.def * (1 + defBonus) * 0.5 + Math.random() * 10);
-  defender.hp -= Math.round(dmg);
-  // Counter-attack
-  if (defender.hp > 0) {
-    const counterDmg = Math.max(2, defender.atk * 0.4 - attacker.def * 0.3 + Math.random() * 5);
-    attacker.hp -= Math.round(counterDmg);
-    log(`Counter! ${attacker.type} takes ${Math.round(counterDmg)} dmg`, 'combat');
+  const preview = previewCombat(attacker, defender);
+  if (!preview.inRange) {
+    log(`${defender.type} is out of ${attacker.type} range`, 'combat');
+    return;
   }
+
+  const result = applyCombatResult(attacker, defender, preview);
   spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 12);
-  log(`${attacker.owner}'s ${attacker.type} hits for ${Math.round(dmg)} dmg`, 'combat');
-  if (defender.hp <= 0) {
+  log(`${attacker.owner}'s ${attacker.type} hits for ${preview.attackerDamage} dmg`, 'combat');
+
+  if (preview.defenderDamage > 0) {
+    log(`Counter! ${attacker.type} takes ${preview.defenderDamage} dmg`, 'combat');
+  }
+  if (result.attackerPromoted) {
+    log(`${attacker.type} promoted to level ${attacker.level}!`, 'build');
+  }
+
+  if (result.defenderDestroyed) {
     S.units = S.units.filter(u => u !== defender);
     log(`${defender.owner}'s ${defender.type} destroyed!`, 'combat');
     spawnParticles(defender.x * TILE + TILE / 2, defender.y * TILE + TILE / 2, 20);
     checkWin();
   }
-  if (attacker.hp <= 0) {
+  if (result.attackerDestroyed) {
     S.units = S.units.filter(u => u !== attacker);
     log(`${attacker.owner}'s ${attacker.type} destroyed!`, 'combat');
     checkWin();
@@ -245,15 +319,9 @@ function checkWin() {
   const playerCities = S.cities.filter(c => c.owner === 'player');
   const botCities    = S.cities.filter(c => c.owner === 'bot');
   if (botUnits.length === 0 && botCities.length === 0) {
-    S.phase = 'gameover';
-    dom.status.textContent = '🎉 Victory!';
-    dom.status.className = 'status-win';
-    log('*** VICTORY! ***', 'build');
+    finishGame('victory');
   } else if (playerUnits.length === 0 && playerCities.length === 0) {
-    S.phase = 'gameover';
-    dom.status.textContent = '💀 Defeat';
-    dom.status.className = 'status-lose';
-    log('*** DEFEAT ***', 'combat');
+    finishGame('defeat');
   }
 }
 
@@ -286,21 +354,16 @@ function updateParticles() {
 // ─── City production ────────────────────────────────
 function gatherResources(owner) {
   const cities = S.cities.filter(c => c.owner === owner);
-  let totalFood = 0, totalProd = 0, totalSci = 0;
+  let totalFood = 0, totalProd = 0, totalSci = 0, totalGold = 0;
   for (const city of cities) {
-    // Gather yields from surrounding tiles
-    for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) {
-        const nx = city.x + dx, ny = city.y + dy;
-        if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H) {
-          const y = TERRAIN_YIELD[S.map[ny][nx]];
-          totalFood += y.food;
-          totalProd += y.prod;
-          totalSci  += y.sci;
-        }
-      }
-    city.food += totalFood;
-    city.prod += totalProd;
+    const cityYield = summarizeCityYield(S, city);
+    totalFood += cityYield.food;
+    totalProd += cityYield.prod;
+    totalSci += cityYield.science;
+    totalGold += cityYield.gold;
+
+    city.food += cityYield.food;
+    city.prod += cityYield.prod;
 
     // City growth
     if (city.food >= 8 * city.pop) {
@@ -317,17 +380,65 @@ function gatherResources(owner) {
       for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]]) {
         const nx = city.x + dx, ny = city.y + dy;
         if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H &&
-            S.map[ny][nx] !== 'water' &&
+            !isWaterTerrain(S.map[ny][nx].terrain) &&
             !S.units.find(u => u.x === nx && u.y === ny)) {
           spawnX = nx; spawnY = ny; break;
         }
       }
-      S.units.push({ id, owner, x: spawnX, y: spawnY, hp: 100, atk: 28, def: 15, mov: 2, movLeft: 2, type: 'warrior' });
-      log(`${city.name} trained a warrior!`, 'build');
+      const type = owner === 'player' && id % 3 === 0 ? 'archer' : 'warrior';
+      const profile = getUnitProfile({ type });
+      S.units.push({
+        id,
+        owner,
+        x: spawnX,
+        y: spawnY,
+        hp: 100,
+        atk: profile.strength,
+        def: profile.defense,
+        mov: 2,
+        movLeft: 2,
+        type,
+        xp: 0,
+        level: 1,
+      });
+      log(`${city.name} trained a ${type}!`, 'build');
       if (owner === 'player') revealAround(spawnX, spawnY);
     }
   }
-  return { food: totalFood, prod: totalProd, sci: totalSci };
+  S.resources[owner].food += totalFood;
+  S.resources[owner].prod += totalProd;
+  S.resources[owner].science += totalSci;
+  S.resources[owner].gold += totalGold;
+  return { food: totalFood, prod: totalProd, science: totalSci, gold: totalGold };
+}
+
+function fmtRate(value) {
+  return `${value >= 0 ? '+' : ''}${value}`;
+}
+
+function syncText(name, value) {
+  const el = dom[name] || document.getElementById(name);
+  if (el) el.textContent = value;
+  for (const mirror of document.querySelectorAll(`[data-source="${name}"]`)) {
+    mirror.textContent = value;
+  }
+}
+
+function updateHud() {
+  const summary = summarizeEmpire(S, 'player');
+  syncText('food', summary.totals.food);
+  syncText('prod', summary.totals.prod);
+  syncText('science', summary.totals.science);
+  syncText('gold', summary.totals.gold);
+  syncText('foodRate', fmtRate(summary.rates.food));
+  syncText('prodRate', fmtRate(summary.rates.prod));
+  syncText('scienceRate', fmtRate(summary.rates.science));
+  syncText('goldRate', fmtRate(summary.rates.gold));
+  if (dom.turnState) {
+    const cityLabel = summary.cityCount === 1 ? '1 city' : `${summary.cityCount} cities`;
+    const unitLabel = summary.unitCount === 1 ? '1 unit' : `${summary.unitCount} units`;
+    dom.turnState.textContent = `${cityLabel} · ${unitLabel}`;
+  }
 }
 
 // ─── Turn management ────────────────────────────────
@@ -335,6 +446,7 @@ function endPlayerTurn() {
   if (S.phase !== 'player') return;
   S.phase = 'bot';
   S.selected = null;
+  S.selectedCity = null;
   S.reachable.clear();
   S.path = [];
   dom.status.textContent = 'Bot thinking…';
@@ -342,9 +454,8 @@ function endPlayerTurn() {
   updateUnitPanel();
 
   const res = gatherResources('player');
-  dom.food.textContent = res.food;
-  dom.prod.textContent = res.prod;
-  dom.science.textContent = res.sci;
+  updateHud();
+  log(`Income: +${res.food} food, +${res.prod} prod, +${res.science} science, +${res.gold} gold`, 'build');
 
   setTimeout(botTurn, 400);
 }
@@ -357,6 +468,8 @@ function startPlayerTurn() {
   dom.status.className = '';
   S.units.filter(u => u.owner === 'player').forEach(u => { u.movLeft = u.mov; });
   refreshVision();
+  claimTerritory(S.map, S.cities);
+  updateHud();
   log(`─── Turn ${S.turn} ───`);
 }
 
@@ -379,15 +492,19 @@ function botTurn() {
     }
     if (!bestTarget) continue;
 
-    // Check if adjacent to a player unit (attack)
-    const adj = S.units.find(u => u.owner === 'player' &&
-      Math.abs(u.x - bot.x) + Math.abs(u.y - bot.y) === 1);
+    // Check if a player unit is in tactical range.
+    const adj = S.units.find(u => u.owner === 'player' && previewCombat(bot, u).inRange);
     if (adj) {
       combat(bot, adj);
       bot.movLeft = 0;
       // Check city capture
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) {
+        cap.owner = 'bot';
+        claimTerritory(S.map, S.cities);
+        updateHud();
+        log(`Bot captured ${cap.name}!`, 'combat');
+      }
       continue;
     }
 
@@ -414,7 +531,12 @@ function botTurn() {
       bot.movLeft = movLeft;
       // Capture city
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
-      if (cap) { cap.owner = 'bot'; log(`Bot captured ${cap.name}!`, 'combat'); }
+      if (cap) {
+        cap.owner = 'bot';
+        claimTerritory(S.map, S.cities);
+        updateHud();
+        log(`Bot captured ${cap.name}!`, 'combat');
+      }
     }
   }
 
@@ -504,6 +626,56 @@ function smoothZoom(newZoom, pivotScreenX, pivotScreenY) {
 centerOn(2, 2);
 
 // ─── Rendering layers ───────────────────────────────
+function hexPath(context, px, py, inset = 2) {
+  const x = px + inset;
+  const y = py + inset;
+  const w = TILE - inset * 2;
+  const h = TILE - inset * 2;
+  context.beginPath();
+  context.moveTo(x + w * 0.5, y);
+  context.lineTo(x + w, y + h * 0.24);
+  context.lineTo(x + w, y + h * 0.76);
+  context.lineTo(x + w * 0.5, y + h);
+  context.lineTo(x, y + h * 0.76);
+  context.lineTo(x, y + h * 0.24);
+  context.closePath();
+}
+
+function fillHex(px, py, fillStyle, inset = 2) {
+  ctx.fillStyle = fillStyle;
+  hexPath(ctx, px, py, inset);
+  ctx.fill();
+}
+
+function strokeHex(px, py, strokeStyle, lineWidth = 1, inset = 2) {
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  hexPath(ctx, px, py, inset);
+  ctx.stroke();
+}
+
+function drawResourceMarker(tile, px, py) {
+  if (!tile.resource) return;
+  const resource = RESOURCE_TYPES[tile.resource];
+  if (!resource) return;
+
+  const cx = px + TILE - 12;
+  const cy = py + 12;
+  ctx.fillStyle = 'rgba(7, 11, 20, 0.72)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 236, 160, 0.85)';
+  ctx.lineWidth = 1 / S.zoom;
+  ctx.stroke();
+  ctx.fillStyle = '#ffe9a8';
+  ctx.font = `bold ${8 / S.zoom}px system-ui`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(resource.icon, cx, cy + 0.5);
+  ctx.textBaseline = 'alphabetic';
+}
+
 // Layer 0: Terrain
 function drawLayerTerrain() {
   const vw = viewW(), vh = viewH();
@@ -515,18 +687,32 @@ function drawLayerTerrain() {
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
       if (S.fog[y][x] === 0) continue;
-      const terrain = S.map[y][x];
-      const variant = S.tileVariants[y][x];
-      const sprite = ATLAS.terrain[terrain][variant];
+      const tile = S.map[y][x];
+      const terrain = tile.terrain;
+      const variant = tile.variant ?? S.tileVariants[y][x];
+      const sprite = ATLAS.terrain[terrain]?.[variant % 4];
       const px = x * TILE;
       const py = y * TILE;
-      ctx.drawImage(sprite, px, py, TILE, TILE);
+      ctx.save();
+      hexPath(ctx, px, py, 1.5);
+      ctx.clip();
+      if (sprite) ctx.drawImage(sprite, px, py, TILE, TILE);
+      else fillHex(px, py, '#2a3a2a', 0);
 
-      if (terrain === 'water') {
+      if (terrain === 'ocean' || terrain === 'coast') {
         const shimmer = Math.sin(S.waterPhase + x * 0.7 + y * 0.5) * 0.08 + 0.04;
         ctx.fillStyle = `rgba(120,200,255,${shimmer})`;
         ctx.fillRect(px, py, TILE, TILE);
       }
+      ctx.restore();
+
+      if (tile.owner) {
+        ctx.fillStyle = tile.owner === 'player' ? 'rgba(68, 170, 255, 0.12)' : 'rgba(255, 85, 85, 0.12)';
+        hexPath(ctx, px, py, 3);
+        ctx.fill();
+      }
+      drawResourceMarker(tile, px, py);
+      strokeHex(px, py, terrain === 'coast' ? 'rgba(180,220,255,0.22)' : 'rgba(200,220,255,0.08)', 0.75 / S.zoom, 1.5);
     }
   }
 }
@@ -544,7 +730,7 @@ function drawLayerGrid() {
   for (let y = startY; y <= endY; y++) {
     for (let x = startX; x <= endX; x++) {
       if (S.fog[y][x] === 0) continue;
-      ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
+      strokeHex(x * TILE, y * TILE, 'rgba(200,220,255,0.06)', 0.5 / S.zoom, 2);
     }
   }
 }
@@ -552,10 +738,16 @@ function drawLayerGrid() {
 // Layer 2: Reachable tile highlights
 function drawLayerReachable() {
   if (!S.selected || S.reachable.size === 0) return;
-  ctx.fillStyle = 'rgba(90,200,250,0.12)';
   for (const key of S.reachable) {
     const [x, y] = key.split(',').map(Number);
-    ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+    fillHex(x * TILE, y * TILE, 'rgba(90,200,250,0.12)', 4);
+  }
+  for (const enemy of S.units.filter(u => u.owner !== S.selected.owner)) {
+    const dist = Math.abs(enemy.x - S.selected.x) + Math.abs(enemy.y - S.selected.y);
+    if (dist <= 1) {
+      fillHex(enemy.x * TILE, enemy.y * TILE, 'rgba(255,80,80,0.18)', 4);
+      strokeHex(enemy.x * TILE, enemy.y * TILE, 'rgba(255,120,120,0.55)', 1.5 / S.zoom, 4);
+    }
   }
 }
 
@@ -593,12 +785,18 @@ function drawLayerCities() {
     const sprite = city.owner === 'player' ? ATLAS.cities.player : ATLAS.cities.bot;
     ctx.drawImage(sprite, px - 28, py - 28, 56, 56);
 
-    ctx.font = `bold ${9 / S.zoom}px system-ui`;
-    ctx.fillStyle = city.owner === 'player' ? '#44aaff' : '#ff5555';
+    const bannerColor = city.owner === 'player' ? CIV_COLORS.player : CIV_COLORS.bot;
+    ctx.fillStyle = 'rgba(7,11,20,0.78)';
+    ctx.fillRect(px - 30, py + 19, 60, 13);
+    ctx.strokeStyle = bannerColor;
+    ctx.lineWidth = 1 / S.zoom;
+    ctx.strokeRect(px - 30, py + 19, 60, 13);
+    ctx.font = `bold ${8 / S.zoom}px system-ui`;
+    ctx.fillStyle = bannerColor;
     ctx.textAlign = 'center';
-    ctx.fillText(city.name, px, py + 28);
+    ctx.fillText(city.name, px, py + 29);
 
-    ctx.fillStyle = '#222';
+    ctx.fillStyle = 'rgba(7,11,20,0.86)';
     ctx.beginPath();
     ctx.arc(px + 18, py - 18, 7, 0, Math.PI * 2);
     ctx.fill();
@@ -616,10 +814,19 @@ function drawLayerUnits() {
     if (S.fog[unit.y][unit.x] === 0) continue;
     if (unit.owner === 'bot' && S.fog[unit.y][unit.x] < 2) continue;
 
-    const sprite = unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
+    const side = unit.owner === 'player' ? 'player' : 'bot';
+    const sprite = ATLAS.unitTypes?.[unit.type]?.[side] || (unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot);
     const px = unit.x * TILE;
     const py = unit.y * TILE;
     ctx.drawImage(sprite, px, py, TILE, TILE);
+
+    ctx.fillStyle = unit.owner === 'player' ? CIV_COLORS.player : CIV_COLORS.bot;
+    ctx.beginPath();
+    ctx.arc(px + TILE - 8, py + 8, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 1 / S.zoom;
+    ctx.stroke();
 
     // HP bar
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, unit.hp / 100);
@@ -641,7 +848,8 @@ function drawLayerUnits() {
     const ease = 1 - Math.pow(1 - a.t, 3);
     const px = a.from.x + (a.to.x - a.from.x) * ease;
     const py = a.from.y + (a.to.y - a.from.y) * ease;
-    const sprite = a.unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
+    const side = a.unit.owner === 'player' ? 'player' : 'bot';
+    const sprite = ATLAS.unitTypes?.[a.unit.type]?.[side] || (a.unit.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot);
     ctx.drawImage(sprite, px, py, TILE, TILE);
     drawHPBar(px + 4, py + TILE - 6, TILE - 8, 3, a.unit.hp / 100);
   }
@@ -719,8 +927,17 @@ function drawMinimap() {
   miniCtx.fillRect(0, 0, mw, mh);
 
   const terrainColors = {
-    plains: '#4d8f52', forest: '#2a6e3a', hill: '#8a7d50',
-    water: '#1e5799', desert: '#c9a855'
+    ocean: '#1e5799',
+    coast: '#2f80c9',
+    plains: '#7f9b45',
+    grassland: '#4d8f52',
+    forest: '#2a6e3a',
+    jungle: '#1d6b42',
+    hill: '#8a7d50',
+    mountain: '#7d8490',
+    desert: '#c9a855',
+    tundra: '#79927a',
+    snow: '#dce8ed',
   };
 
   for (let y = 0; y < MAP_H; y++) {
@@ -728,13 +945,19 @@ function drawMinimap() {
       if (S.fog[y][x] === 0) {
         miniCtx.fillStyle = '#111';
       } else {
-        miniCtx.fillStyle = terrainColors[S.map[y][x]];
+        const tile = S.map[y][x];
+        miniCtx.fillStyle = terrainColors[tile.terrain] || '#555';
         if (S.fog[y][x] === 1) {
           miniCtx.globalAlpha = 0.5;
         }
       }
       miniCtx.fillRect(x * tw, y * th, tw + 0.5, th + 0.5);
       miniCtx.globalAlpha = 1;
+      const owner = S.map[y][x].owner;
+      if (owner) {
+        miniCtx.fillStyle = owner === 'player' ? 'rgba(68,170,255,0.35)' : 'rgba(255,85,85,0.35)';
+        miniCtx.fillRect(x * tw, y * th, tw + 0.5, th + 0.5);
+      }
     }
   }
 
@@ -765,27 +988,50 @@ function drawMinimap() {
 // ─── Unit info panel ────────────────────────────────
 function updateUnitPanel() {
   const u = S.selected;
+  const city = S.selectedCity;
   if (!u) {
-    dom.unitDet.innerHTML = '<p class="placeholder">Click a unit to see details</p>';
+    if (city) {
+      const yields = summarizeCityYield(S, city);
+      dom.unitDet.innerHTML = `
+        <div class="unit-info-header">
+          <span class="city-badge" style="--civ-color:${city.owner === 'player' ? CIV_COLORS.player : CIV_COLORS.bot}"></span>
+          <span class="unit-name">${city.name}</span>
+        </div>
+        <div class="unit-info-stats">
+          <span class="stat-label">Population</span><span class="stat-val">${city.pop}</span>
+          <span class="stat-label">Build</span><span class="stat-val">${city.production || 'Warrior'}</span>
+          <span class="stat-label">Food/turn</span><span class="stat-val hp-high">+${yields.food}</span>
+          <span class="stat-label">Prod/turn</span><span class="stat-val">+${yields.prod}</span>
+          <span class="stat-label">Science</span><span class="stat-val">+${yields.science}</span>
+          <span class="stat-label">Gold</span><span class="stat-val">+${yields.gold}</span>
+        </div>`;
+      return;
+    }
+    dom.unitDet.innerHTML = '<p class="placeholder">Click a unit or city to see details</p>';
     return;
   }
+  const profile = getUnitProfile(u);
   const hpClass = u.hp > 60 ? 'hp-high' : u.hp > 30 ? 'hp-mid' : 'hp-low';
   dom.unitDet.innerHTML = `
     <div class="unit-info-header">
       <canvas class="unit-icon" id="unitIcon" width="32" height="32"></canvas>
-      <span class="unit-name">${u.type.charAt(0).toUpperCase() + u.type.slice(1)}</span>
+      <span class="unit-name">${profile.label}</span>
     </div>
     <div class="unit-info-stats">
       <span class="stat-label">HP</span><span class="stat-val ${hpClass}">${u.hp}/100</span>
       <span class="stat-label">ATK</span><span class="stat-val">${u.atk}</span>
       <span class="stat-label">DEF</span><span class="stat-val">${u.def}</span>
       <span class="stat-label">MOV</span><span class="stat-val">${u.movLeft}/${u.mov}</span>
+      <span class="stat-label">RNG</span><span class="stat-val">${profile.range}</span>
+      <span class="stat-label">XP</span><span class="stat-val">${u.xp ?? 0}/10</span>
+      <span class="stat-label">LVL</span><span class="stat-val">${u.level ?? 1}</span>
     </div>`;
   // Draw tiny icon
   const ic = document.getElementById('unitIcon');
   if (ic) {
     const ictx = ic.getContext('2d');
-    const sprite = u.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot;
+    const side = u.owner === 'player' ? 'player' : 'bot';
+    const sprite = ATLAS.unitTypes?.[u.type]?.[side] || (u.owner === 'player' ? ATLAS.units.player : ATLAS.units.bot);
     ictx.drawImage(sprite, 0, 0, 32, 32);
   }
 }
@@ -794,16 +1040,30 @@ function updateUnitPanel() {
 function showTooltip(x, y, tileX, tileY) {
   if (tileX < 0 || tileX >= MAP_W || tileY < 0 || tileY >= MAP_H) { hideTooltip(); return; }
   if (S.fog[tileY][tileX] === 0) { hideTooltip(); return; }
-  const terrain = S.map[tileY][tileX];
-  const yields = TERRAIN_YIELD[terrain];
+  const tile = S.map[tileY][tileX];
+  const terrain = tile.terrain;
+  const yields = getTileYield(tile);
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const target = S.units.find(u => u.owner !== 'player' && u.x === tileX && u.y === tileY);
+  const preview = S.selected && target ? previewCombat(S.selected, target) : null;
+  const modifierLabels = preview?.modifiers.length
+    ? `<small>${preview.modifiers.map(mod => mod.label).join(' • ')}</small>`
+    : '';
+  const combatHtml = preview ? `
+    <div class="tt-combat">
+      <strong>Combat preview</strong>
+      <span>${formatCombatPreview(preview)}</span>
+      ${modifierLabels}
+    </div>` : '';
   tooltip.innerHTML = `
-    <div class="tt-title">${terrain}${def ? ' (+' + def + '% def)' : ''}</div>
+    <div class="tt-title">${describeTile(tile)}${def ? ' (+' + def + '% def)' : ''}</div>
     <div class="tt-yields">
       <span>🌾${yields.food}</span>
       <span>⚒️${yields.prod}</span>
-      <span>🔬${yields.sci}</span>
-    </div>`;
+      <span>🔬${yields.science}</span>
+      <span>💰${yields.gold}</span>
+    </div>
+    ${combatHtml}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (x + 16) + 'px';
   tooltip.style.top = (y + 16) + 'px';
@@ -904,8 +1164,16 @@ function handleClick(tx, ty) {
   const myUnit = S.units.find(u => u.owner === 'player' && u.x === tx && u.y === ty);
   if (myUnit) {
     S.selected = myUnit;
+    S.selectedCity = null;
     S.reachable = calcReachable(myUnit);
     S.path = [];
+    updateUnitPanel();
+    return;
+  }
+
+  const city = S.cities.find(c => c.x === tx && c.y === ty && S.fog[c.y][c.x] > 0);
+  if (city && !S.selected) {
+    S.selectedCity = city;
     updateUnitPanel();
     return;
   }
@@ -913,7 +1181,7 @@ function handleClick(tx, ty) {
   // Move / attack with selected unit
   if (S.selected && S.selected.movLeft > 0) {
     const enemy = S.units.find(u => u.owner === 'bot' && u.x === tx && u.y === ty);
-    if (enemy && Math.abs(enemy.x - S.selected.x) + Math.abs(enemy.y - S.selected.y) === 1) {
+    if (enemy && previewCombat(S.selected, enemy).inRange) {
       combat(S.selected, enemy);
       S.selected.movLeft = 0;
       S.reachable.clear();
@@ -940,7 +1208,7 @@ function handleClick(tx, ty) {
               const sel = S.selected;
               animateMove(sel, movePath, () => {
                 sel.movLeft = movLeft;
-                combat(sel, blocker);
+                if (previewCombat(sel, blocker).inRange) combat(sel, blocker);
                 sel.movLeft = 0;
                 S.reachable.clear();
                 updateUnitPanel();
@@ -948,7 +1216,7 @@ function handleClick(tx, ty) {
               });
               return;
             } else {
-              combat(S.selected, blocker);
+              if (previewCombat(S.selected, blocker).inRange) combat(S.selected, blocker);
               S.selected.movLeft = 0;
             }
           }
@@ -969,7 +1237,13 @@ function handleClick(tx, ty) {
           refreshVision();
           // City capture
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
-          if (cap) { cap.owner = 'player'; log(`Captured ${cap.name}!`, 'build'); checkWin(); }
+          if (cap) {
+            cap.owner = 'player';
+            claimTerritory(S.map, S.cities);
+            updateHud();
+            log(`Captured ${cap.name}!`, 'build');
+            checkWin();
+          }
         });
       }
     }
@@ -980,13 +1254,24 @@ function handleClick(tx, ty) {
 document.addEventListener('keydown', e => {
   keysDown.add(e.key.toLowerCase());
 
-  if (e.key === 'e' || e.key === 'E') endPlayerTurn();
+  if (S.ux.screen === 'menu') {
+    if (e.key === 'Enter') beginGame();
+    if (e.key === '?' || e.key.toLowerCase() === 'h') setTutorial();
+    return;
+  }
+
+  if (e.key === 'e' || e.key === 'E' || e.key === 'Enter') endPlayerTurn();
   if (e.key === 'c' || e.key === 'C') {
     const u = S.selected || S.units.find(u => u.owner === 'player');
     if (u) centerOn(u.x, u.y);
   }
   if (e.key === 'Escape') {
+    if (S.ux.tutorialOpen) {
+      setTutorial(false);
+      return;
+    }
     S.selected = null;
+    S.selectedCity = null;
     S.reachable.clear();
     S.path = [];
     updateUnitPanel();
@@ -1000,6 +1285,7 @@ document.addEventListener('keydown', e => {
     const curIdx = S.selected ? idle.indexOf(S.selected) : -1;
     const next = idle[(curIdx + 1) % idle.length];
     S.selected = next;
+    S.selectedCity = null;
     S.reachable = calcReachable(next);
     S.path = [];
     updateUnitPanel();
@@ -1017,6 +1303,12 @@ document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
   if (u) centerOn(u.x, u.y);
 });
+document.getElementById('btnHelp').addEventListener('click', () => setTutorial());
+document.getElementById('btnStartGame').addEventListener('click', beginGame);
+document.getElementById('btnMenuTutorial').addEventListener('click', () => setTutorial());
+document.getElementById('btnCloseTutorial').addEventListener('click', () => setTutorial(false));
+document.getElementById('btnRestartGame').addEventListener('click', restartGame);
+document.getElementById('btnGameOverTutorial').addEventListener('click', () => setTutorial(true));
 
 // ─── Main loop ──────────────────────────────────────
 let lastTime = 0;
@@ -1089,6 +1381,8 @@ function gameLoop(now) {
 (async () => {
   log('Loading sprites…');
   ATLAS = await buildSpriteAtlas();
+  updateHud();
+  updateUnitPanel();
   log('Sprites loaded — game starting!', 'good');
   requestAnimationFrame(gameLoop);
 })();
