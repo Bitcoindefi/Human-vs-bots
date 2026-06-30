@@ -27,6 +27,13 @@ import {
 } from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 import {
+  buildBuilding,
+  calculateCityEconomy,
+  CITY_BUILDINGS,
+  createCity,
+  progressCityTurn,
+} from './city-model.js';
+import {
   activeTradeYield,
   advanceTradeRoutes,
   collectEmpireResources,
@@ -93,6 +100,7 @@ const dom = {
   prod:    document.getElementById('prod'),
   prodRate: document.getElementById('prodRate'),
   science: document.getElementById('science'),
+  cityDet: document.getElementById('cityDetails'),
   scienceRate: document.getElementById('scienceRate'),
   gold: document.getElementById('gold'),
   goldRate: document.getElementById('goldRate'),
@@ -243,7 +251,7 @@ const initialCiv = createCivState({ width: MAP_W, height: MAP_H, seed: 17 });
 const S = {
   map: initialCiv.map,
   units: initialCiv.units,
-  cities: initialCiv.cities,
+  cities: initialCiv.cities.map((city) => createCity(city)),
   resources: initialCiv.resources,
   resourceTiles: [],
   empireResources: { player: null, bot: null },
@@ -378,6 +386,7 @@ initializeNeutralCamps();
 refreshVision();
 refreshEmpireResourceState();
 updateResourcePanel();
+updateCityPanel();
 dom.status.textContent = 'Ready';
 renderUx();
 
@@ -652,8 +661,10 @@ function gatherResources(owner) {
       if (owner === 'player') playAudioEvent(AUDIO_EVENTS.build);
       log(`${city.name} grows to pop ${city.pop}!`, 'build');
     }
-    // Auto-recruit
-    if (city.prod >= 12) {
+
+    // Bot auto-recruitment keeps the prototype opponent active; player
+    // production is banked for city buildings until #16 adds a queue.
+    if (owner === 'bot' && city.prod >= 12) {
       city.prod -= 12;
       const id = S.nextId++;
       let spawnX = city.x, spawnY = city.y;
@@ -692,6 +703,7 @@ function gatherResources(owner) {
   S.resources[owner].science += totalSci;
   S.resources[owner].gold += totalGold;
   updateResourcePanel();
+  updateCityPanel();
   return { food: totalFood, prod: totalProd, science: totalSci, gold: totalGold };
 }
 
@@ -1348,6 +1360,14 @@ function drawLayerCities() {
     ctx.fillStyle = '#ffd700';
     ctx.font = `bold ${8 / S.zoom}px system-ui`;
     ctx.fillText(city.pop, px + 18, py - 15);
+
+    if (city.buildings?.length) {
+      ctx.fillStyle = '#1b1f2a';
+      ctx.fillRect(px - 20, py + 32, 40, 10);
+      ctx.fillStyle = city.owner === 'player' ? '#3fb950' : '#d29922';
+      ctx.font = `bold ${7 / S.zoom}px system-ui`;
+      ctx.fillText(`${city.buildings.length} bld`, px, py + 40);
+    }
   }
 }
 
@@ -1643,6 +1663,60 @@ function updateUnitPanel() {
   }
 }
 
+// ─── City management panel ──────────────────────────
+function updateCityPanel() {
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) {
+    dom.cityDet.innerHTML = '<p class="placeholder">No player city remains</p>';
+    return;
+  }
+  const playerCityCount = S.cities.filter(c => c.owner === 'player').length;
+  const economy = calculateCityEconomy(city, S.map, TERRAIN_YIELD, playerCityCount);
+  let happinessClass = 'happy-bad';
+  if (economy.happiness >= 1) {
+    happinessClass = 'happy-good';
+  } else if (economy.happiness === 0) {
+    happinessClass = 'happy-neutral';
+  }
+  const built = city.buildings.length ? city.buildings.map(key => CITY_BUILDINGS[key]?.name || key).join(', ') : 'None';
+  const workedTiles = economy.workedTiles
+    .map(tile => `${tile.terrain} (${tile.yields.food}/${tile.yields.prod}/${tile.yields.sci})`)
+    .join(', ');
+  const buttons = Object.entries(CITY_BUILDINGS).map(([key, building]) => {
+    const isBuilt = city.buildings.includes(key);
+    const affordable = city.prod >= building.cost;
+    const disabled = isBuilt || !affordable ? ' disabled' : '';
+    const label = isBuilt ? `${building.name} built` : `Build ${building.name} (${building.cost})`;
+    const hint = formatBuildingHint(building);
+    return `<button type="button" data-building="${key}"${disabled}>${label}<span>${hint}</span></button>`;
+  }).join('');
+
+  dom.cityDet.innerHTML = `
+    <div class="city-card">
+      <div class="city-title"><strong>${city.name}</strong><span>Pop ${city.pop}</span></div>
+      <div class="city-stat-grid">
+        <span>Food</span><strong>${city.food}/${economy.foodRequired}</strong>
+        <span>Prod bank</span><strong>${city.prod}</strong>
+        <span>Happiness</span><strong class="${happinessClass}">${economy.happiness}</strong>
+        <span>Defense</span><strong>+${economy.defenseBonus}</strong>
+      </div>
+      <div class="city-yields">+${economy.totalYields.food} 🌾 +${economy.totalYields.prod} ⚒️ +${economy.totalYields.sci} 🔬 / turn</div>
+      <p class="city-meta">Buildings: ${built}</p>
+      <p class="city-meta">Worked: ${workedTiles}</p>
+      <div class="building-actions">${buttons}</div>
+    </div>`;
+}
+
+function formatBuildingHint(building) {
+  const parts = [];
+  if (building.yields.food) parts.push(`+${building.yields.food} food`);
+  if (building.yields.prod) parts.push(`+${building.yields.prod} prod`);
+  if (building.yields.sci) parts.push(`+${building.yields.sci} science`);
+  if (building.amenities) parts.push(`+${building.amenities} amenity`);
+  if (building.defense) parts.push(`+${building.defense} defense`);
+  return parts.join(', ');
+}
+
 // ─── Tooltip ────────────────────────────────────────
 function showTooltip(x, y, tileX, tileY) {
   if (tileX < 0 || tileX >= MAP_W || tileY < 0 || tileY >= MAP_H) { hideTooltip(); return; }
@@ -1651,6 +1725,11 @@ function showTooltip(x, y, tileX, tileY) {
   const terrain = tile.terrain;
   const yields = getTileYield(tile);
   const def = Math.round(TERRAIN_DEFENSE[terrain] * 100);
+  const workedBy = S.cities
+    .filter(c => c.owner === 'player')
+    .find(c => calculateCityEconomy(c, S.map, TERRAIN_YIELD, S.cities.filter(city => city.owner === c.owner).length)
+      .workedTiles.some(tile => tile.x === tileX && tile.y === tileY));
+  const workedLabel = workedBy ? `<div class="tt-worked">Worked by ${workedBy.name}</div>` : '';
   const resource = resourceAt(S.resourceTiles, tileX, tileY);
   const resourceLine = resource
     ? `<div class="tt-resource">${resource.name} (${resource.category}) +${formatYield(resource.yield)}</div>`
@@ -1678,6 +1757,7 @@ function showTooltip(x, y, tileX, tileY) {
       <span>🔬${yields.science}</span>
       <span>💰${yields.gold}</span>
     </div>
+    ${workedLabel}
     ${resourceLine}
     ${campText}
     ${combatHtml}`;
@@ -1859,8 +1939,10 @@ function handleClick(tx, ty) {
           const cap = S.cities.find(c => c.owner === 'bot' && c.x === sel.x && c.y === sel.y);
           if (cap) {
             cap.owner = 'player';
+            Object.assign(cap, createCity(cap));
             claimTerritory(S.map, S.cities);
             updateHud();
+            updateCityPanel();
             playAudioEvent(AUDIO_EVENTS.build);
             log(`Captured ${cap.name}!`, 'build');
             checkWin();
@@ -1932,6 +2014,20 @@ document.getElementById('btnCenter').addEventListener('click', () => {
     playAudioEvent(AUDIO_EVENTS.click);
     centerOn(u.x, u.y);
   }
+});
+dom.cityDet.addEventListener('click', e => {
+  const btn = e.target.closest('[data-building]');
+  if (!btn) return;
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) return;
+  const result = buildBuilding(city, btn.dataset.building);
+  if (result.ok) {
+    Object.assign(city, result.city);
+    log(`${city.name} built ${CITY_BUILDINGS[btn.dataset.building].name}.`, 'build');
+  } else {
+    log(`Cannot build ${CITY_BUILDINGS[btn.dataset.building]?.name || 'building'}: ${result.reason}.`, 'combat');
+  }
+  updateCityPanel();
 });
 dom.tradeBtn.addEventListener('click', openTradeRoute);
 document.getElementById('btnHelp').addEventListener('click', () => setTutorial());
