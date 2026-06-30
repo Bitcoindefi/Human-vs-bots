@@ -51,6 +51,11 @@ Alternative prototype route:
 - OpenAI GPT-4.1 mini (Medium)
 - OpenAI o1-mini (Very Hard)
 
+Real AI turn decisions can be connected through a safe provider layer for a
+server-side cloud proxy, local OpenAI-compatible endpoint, or MCP tool. See
+[`docs/ai-opponent.md`](docs/ai-opponent.md) for the provider contract,
+configuration, and anti-farm metadata.
+
 ## Web3 / ZK flow in the demo
 
 UI includes:
@@ -73,6 +78,7 @@ The flow is aligned with Stellar hackathon architecture and is prepared for deep
 - `scripts/serve-human-vs-bots.sh`
 - `scripts/serve-civ-lite.sh`
 - `scripts/game-studio.sh`
+- `scripts/ai-opponent-proxy.mjs`
 
 ## Godot project
 
