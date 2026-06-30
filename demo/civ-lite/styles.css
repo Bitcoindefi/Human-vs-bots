@@ -327,6 +327,104 @@ button:active {
 #logContent .log-good,
 #eventLog .log-good   { color: var(--accent2); }
 
+/* ───── UX overlays ──────────────────────────────── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(7, 11, 20, 0.74);
+  backdrop-filter: blur(6px);
+}
+
+.overlay-hidden {
+  display: none;
+}
+
+.overlay-panel {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #1b2434 0%, var(--surface) 100%);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+}
+
+.overlay-panel h2 {
+  margin: 4px 0 8px;
+  font-size: 1.45rem;
+  letter-spacing: 0;
+}
+
+.eyebrow {
+  color: var(--gold);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+}
+
+.overlay-copy {
+  color: var(--dim);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.overlay-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.overlay-actions button {
+  flex: 1;
+}
+
+.tutorial-panel {
+  position: fixed;
+  top: 56px;
+  right: 256px;
+  z-index: 90;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(22,27,34,0.97);
+  box-shadow: 0 16px 36px rgba(0,0,0,0.42);
+}
+
+.tutorial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tutorial-head h2 {
+  font-size: 0.95rem;
+}
+
+#btnCloseTutorial {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+.tutorial-panel ol {
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.tutorial-panel li + li {
+  margin-top: 6px;
+}
+
 /* ───── Tooltip ──────────────────────────────────── */
 #tooltip {
   position: fixed;
@@ -387,4 +485,13 @@ button:active {
   }
   #sidebar section { flex: 1; min-width: 120px; }
   #log { display: none; }
+  .tutorial-panel {
+    top: 48px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+  .overlay-panel {
+    padding: 18px;
+  }
 }

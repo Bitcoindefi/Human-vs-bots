@@ -18,6 +18,13 @@ import {
   summarizeEmpire,
 } from './civ-model.js';
 import { buildSpriteAtlas } from './sprites.js';
+import {
+  createUxState,
+  describeOutcome,
+  startGame,
+  toggleTutorial,
+  updateOutcome,
+} from './ux-model.js';
 
 // ─── Constants ──────────────────────────────────────
 const MAP_W = 24, MAP_H = 16, TILE = 48;
@@ -47,6 +54,12 @@ const dom = {
   goldRate: document.getElementById('goldRate'),
   unitDet: document.getElementById('contextPanel') || document.getElementById('unitDetails'),
   logBox:  document.getElementById('eventLog') || document.getElementById('logContent'),
+  menu:    document.getElementById('mainMenu'),
+  gameOver: document.getElementById('gameOver'),
+  tutorial: document.getElementById('tutorialPanel'),
+  outcomeEyebrow: document.getElementById('outcomeEyebrow'),
+  outcomeTitle: document.getElementById('outcomeTitle'),
+  outcomeSummary: document.getElementById('outcomeSummary'),
 };
 
 // ─── Build sprite atlas (async) ─────────────────────
@@ -61,6 +74,48 @@ function log(msg, cls = '') {
   while (dom.logBox.children.length > 60) dom.logBox.lastChild.remove();
 }
 
+// ─── UX flow ───────────────────────────────────────
+function renderUx() {
+  dom.menu.classList.toggle('overlay-hidden', S.ux.screen !== 'menu');
+  dom.gameOver.classList.toggle('overlay-hidden', S.ux.screen !== 'gameover');
+  dom.tutorial.hidden = !S.ux.tutorialOpen;
+
+  if (S.ux.outcome) {
+    const isVictory = S.ux.outcome.result === 'victory';
+    dom.outcomeEyebrow.textContent = isVictory ? 'Campaign Won' : 'Campaign Lost';
+    dom.outcomeTitle.textContent = isVictory ? 'Victory' : 'Defeat';
+    dom.outcomeSummary.textContent = `${describeOutcome(S.ux)}. ${isVictory ? 'Babylon can no longer contest the map.' : 'Athens has fallen out of contention.'}`;
+  }
+}
+
+function beginGame() {
+  S.ux = startGame(S.ux);
+  S.phase = 'player';
+  dom.status.textContent = 'Your turn';
+  dom.status.className = '';
+  log('Campaign started.', 'build');
+  renderUx();
+}
+
+function setTutorial(open = null) {
+  S.ux = toggleTutorial(S.ux, open);
+  renderUx();
+}
+
+function finishGame(result) {
+  S.phase = 'gameover';
+  S.ux = updateOutcome(S.ux, result, S.turn);
+  const isVictory = result === 'victory';
+  dom.status.textContent = isVictory ? '🎉 Victory!' : '💀 Defeat';
+  dom.status.className = isVictory ? 'status-win' : 'status-lose';
+  log(isVictory ? '*** VICTORY! ***' : '*** DEFEAT ***', isVictory ? 'build' : 'combat');
+  renderUx();
+}
+
+function restartGame() {
+  window.location.reload();
+}
+
 // ─── Seeded RNG for tile variants ───────────────────
 function hashTile(x, y) { return ((x * 374761393 + y * 668265263) ^ 1274126177) >>> 0; }
 
@@ -72,7 +127,8 @@ const S = {
   cities: initialCiv.cities,
   resources: initialCiv.resources,
   turn: 1,
-  phase: 'player',  // player | bot | animating | gameover
+  phase: 'menu',  // menu | player | bot | animating | gameover
+  ux: createUxState(),
   selected: null,
   selectedCity: null,
   fog: [],           // 0=unknown, 1=seen, 2=visible
@@ -127,6 +183,8 @@ function refreshVision() {
 }
 
 refreshVision();
+dom.status.textContent = 'Ready';
+renderUx();
 
 // ─── Pathfinding (A*) ───────────────────────────────
 function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
@@ -224,15 +282,9 @@ function checkWin() {
   const playerCities = S.cities.filter(c => c.owner === 'player');
   const botCities    = S.cities.filter(c => c.owner === 'bot');
   if (botUnits.length === 0 && botCities.length === 0) {
-    S.phase = 'gameover';
-    dom.status.textContent = '🎉 Victory!';
-    dom.status.className = 'status-win';
-    log('*** VICTORY! ***', 'build');
+    finishGame('victory');
   } else if (playerUnits.length === 0 && playerCities.length === 0) {
-    S.phase = 'gameover';
-    dom.status.textContent = '💀 Defeat';
-    dom.status.className = 'status-lose';
-    log('*** DEFEAT ***', 'combat');
+    finishGame('defeat');
   }
 }
 
@@ -1135,12 +1187,22 @@ function handleClick(tx, ty) {
 document.addEventListener('keydown', e => {
   keysDown.add(e.key.toLowerCase());
 
+  if (S.ux.screen === 'menu') {
+    if (e.key === 'Enter') beginGame();
+    if (e.key === '?' || e.key.toLowerCase() === 'h') setTutorial();
+    return;
+  }
+
   if (e.key === 'e' || e.key === 'E' || e.key === 'Enter') endPlayerTurn();
   if (e.key === 'c' || e.key === 'C') {
     const u = S.selected || S.units.find(u => u.owner === 'player');
     if (u) centerOn(u.x, u.y);
   }
   if (e.key === 'Escape') {
+    if (S.ux.tutorialOpen) {
+      setTutorial(false);
+      return;
+    }
     S.selected = null;
     S.selectedCity = null;
     S.reachable.clear();
@@ -1174,6 +1236,12 @@ document.getElementById('btnCenter').addEventListener('click', () => {
   const u = S.selected || S.units.find(u => u.owner === 'player');
   if (u) centerOn(u.x, u.y);
 });
+document.getElementById('btnHelp').addEventListener('click', () => setTutorial());
+document.getElementById('btnStartGame').addEventListener('click', beginGame);
+document.getElementById('btnMenuTutorial').addEventListener('click', () => setTutorial());
+document.getElementById('btnCloseTutorial').addEventListener('click', () => setTutorial(false));
+document.getElementById('btnRestartGame').addEventListener('click', restartGame);
+document.getElementById('btnGameOverTutorial').addEventListener('click', () => setTutorial(true));
 
 // ─── Main loop ──────────────────────────────────────
 let lastTime = 0;
