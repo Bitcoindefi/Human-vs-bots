@@ -15,6 +15,9 @@ run/main_scene="res://scenes/Main.tscn"
 [autoload]
 
 EventBus="*res://autoloads/EventBus.gd"
+GameState="*res://autoloads/GameState.gd"
+EconomyManager="*res://autoloads/EconomyManager.gd"
+TurnManager="*res://autoloads/TurnManager.gd"
 WebBridge="*res://autoloads/WebBridge.gd"
 
 [display]
