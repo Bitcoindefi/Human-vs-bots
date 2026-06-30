@@ -31,6 +31,10 @@ signal unit_died(unit_id: StringName, owner_id: StringName, hex: Vector2i)
 ## Emitted when a unit receives a promotion or upgrade.
 signal unit_promoted(unit_id: StringName, promotion_id: StringName, bonuses: Dictionary)
 
+## unit_xp_gained(unit_id: StringName, amount: int, hex: Vector2i)
+## Emitted when a unit earns experience from combat, exploration, or objectives.
+signal unit_xp_gained(unit_id: StringName, amount: int, hex: Vector2i)
+
 
 # City events
 
@@ -49,6 +53,10 @@ signal city_captured(
 ## production_complete(city_id: StringName, production_id: StringName, result: Dictionary)
 ## Emitted when a city's production queue completes an item.
 signal production_complete(city_id: StringName, production_id: StringName, result: Dictionary)
+
+## resource_discovered(resource_id: StringName, hex: Vector2i, metadata: Dictionary)
+## Emitted when a hidden resource or discovery tile is revealed.
+signal resource_discovered(resource_id: StringName, hex: Vector2i, metadata: Dictionary)
 
 
 # Turn events
@@ -137,6 +145,15 @@ func emit_unit_promoted(
 	unit_promoted.emit(unit_id, promotion_id, bonuses)
 
 
+func emit_unit_xp_gained(
+	unit_id: StringName,
+	amount: int,
+	hex: Vector2i = Vector2i.ZERO
+) -> void:
+	_log_event("unit_xp_gained", [unit_id, amount, hex])
+	unit_xp_gained.emit(unit_id, amount, hex)
+
+
 func emit_city_built(city_id: StringName, owner_id: StringName, hex: Vector2i) -> void:
 	_log_event("city_built", [city_id, owner_id, hex])
 	city_built.emit(city_id, owner_id, hex)
@@ -158,6 +175,15 @@ func emit_production_complete(
 ) -> void:
 	_log_event("production_complete", [city_id, production_id, result])
 	production_complete.emit(city_id, production_id, result)
+
+
+func emit_resource_discovered(
+	resource_id: StringName,
+	hex: Vector2i,
+	metadata: Dictionary = {}
+) -> void:
+	_log_event("resource_discovered", [resource_id, hex, metadata])
+	resource_discovered.emit(resource_id, hex, metadata)
 
 
 func emit_turn_started(turn_number: int, player_id: StringName) -> void:

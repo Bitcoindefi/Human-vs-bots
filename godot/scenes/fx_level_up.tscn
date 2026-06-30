@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="Gradient" id="Gradient_level"]
+offsets = PackedFloat32Array(0, 0.45, 1)
+colors = PackedColorArray(Color(1, 1, 0.72, 1), Color(1, 0.82, 0.05, 0.8), Color(1, 0.48, 0.05, 0))
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_level"]
+gradient = SubResource("Gradient_level")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_level"]
+emission_shape = 1
+emission_sphere_radius = 16.0
+direction = Vector3(0, -1, 0)
+spread = 180.0
+gravity = Vector3(0, 22, 0)
+initial_velocity_min = 95.0
+initial_velocity_max = 165.0
+scale_min = 2.5
+scale_max = 5.5
+color = Color(1, 0.92, 0.18, 1)
+color_ramp = SubResource("Gradient_level")
+
+[node name="FXLevelUp" type="GPUParticles2D"]
+emitting = false
+amount = 200
+lifetime = 1.0
+one_shot = true
+explosiveness = 1.0
+randomness = 0.32
+process_material = SubResource("ParticleProcessMaterial_level")
+texture = SubResource("GradientTexture1D_level")

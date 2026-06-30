@@ -16,6 +16,8 @@ run/main_scene="res://scenes/Main.tscn"
 
 EventBus="*res://autoloads/EventBus.gd"
 WebBridge="*res://autoloads/WebBridge.gd"
+ParticlePool="*res://autoloads/ParticlePool.gd"
+ParticleManager="*res://autoloads/ParticleManager.gd"
 
 [display]
 
