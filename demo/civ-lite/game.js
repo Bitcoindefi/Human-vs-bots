@@ -39,6 +39,13 @@ import {
 } from './combat-model.js';
 import { buildSpriteAtlas } from './sprites.js';
 import {
+  createProductionQueue,
+  enqueueProduction,
+  evaluateVictory,
+  movementPlanForPath,
+  progressProductionQueue,
+} from './production-model.js';
+import {
   buildBuilding,
   calculateCityEconomy,
   CITY_BUILDINGS,
@@ -90,11 +97,16 @@ const EDGE_SCROLL_ZONE = 30, EDGE_SCROLL_SPEED = 600;  // px from edge, px/sec
 const PAN_SPEED = 500;  // WASD px/sec (world units)
 const SIGHT = 2;
 const UNIT_STATS = {
-  warrior: { atk: 30, def: 15, mov: 2 },
-  archer: { atk: 24, def: 12, mov: 2 },
-  swordsman: { atk: 38, def: 18, mov: 2 },
-  horseman: { atk: 34, def: 14, mov: 3 },
+  warrior: { hp: 100, atk: 30, def: 15, mov: 2 },
+  archer: { hp: 90, atk: 24, def: 12, mov: 2 },
+  swordsman: { hp: 110, atk: 38, def: 18, mov: 2 },
+  horseman: { hp: 95, atk: 34, def: 14, mov: 3 },
+  scout: { hp: 80, atk: 18, def: 10, mov: 3 },
 };
+const PRODUCTION_OPTIONS = [
+  { id: 'warrior', label: 'Warrior', cost: 12, unitType: 'warrior' },
+  { id: 'scout', label: 'Scout', cost: 8, unitType: 'scout' },
+];
 const GAME_SEED = 'civ-lite-barbarian-events-21';
 
 // ─── DOM refs ───────────────────────────────────────
@@ -141,6 +153,7 @@ const dom = {
   masterVolume: document.getElementById('masterVolume'),
   musicVolume: document.getElementById('musicVolume'),
   sfxVolume: document.getElementById('sfxVolume'),
+  prodPanel: document.getElementById('productionPanel'),
   menu:    document.getElementById('mainMenu'),
   gameOver: document.getElementById('gameOver'),
   tutorial: document.getElementById('tutorialPanel'),
@@ -295,7 +308,10 @@ const S = {
   diplomacy: buildDiplomacy(DEFAULT_CIVS),
   map: initialCiv.map,
   units: initialCiv.units,
-  cities: initialCiv.cities.map((city) => createCity(city)),
+  cities: initialCiv.cities.map((city) => ({
+    ...createCity(city),
+    productionQueue: createProductionQueue(PRODUCTION_OPTIONS),
+  })),
   resources: initialCiv.resources,
   resourceTiles: [],
   empireResources: { player: null, bot: null },
@@ -330,6 +346,10 @@ const S = {
   reachable: new Set(),
   tileVariants: [],
 };
+
+for (const city of S.cities) {
+  if (city.owner === 'player') enqueueProduction(city.productionQueue, 'warrior');
+}
 
 function resetVisibilityState() {
   S.fog = [];
@@ -739,6 +759,37 @@ function getShakeOffset(now) {
 }
 
 // ─── City production ────────────────────────────────
+function spawnUnitFromProduction(owner, city, item) {
+  const stats = UNIT_STATS[item.unitType] || UNIT_STATS.warrior;
+  const id = S.nextId++;
+  let spawnX = city.x, spawnY = city.y;
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]]) {
+    const nx = city.x + dx, ny = city.y + dy;
+    if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H &&
+        !isWaterTerrain(S.map[ny][nx].terrain) &&
+        !S.units.find(u => u.x === nx && u.y === ny)) {
+      spawnX = nx; spawnY = ny; break;
+    }
+  }
+  S.units.push({
+    id,
+    owner,
+    x: spawnX,
+    y: spawnY,
+    hp: stats.hp,
+    atk: stats.atk,
+    def: stats.def,
+    mov: stats.mov,
+    movLeft: stats.mov,
+    type: item.unitType,
+    xp: 0,
+    level: 1,
+  });
+  if (owner === 'player') playAudioEvent(AUDIO_EVENTS.build);
+  log(`${city.name} completed ${item.label}!`, 'build');
+  if (owner === 'player') revealAround(spawnX, spawnY);
+}
+
 function gatherResources(owner) {
   S.empireResources[owner] = collectEmpireResources({
     owner,
@@ -779,41 +830,14 @@ function gatherResources(owner) {
       log(`${city.name} grows to pop ${city.pop}!`, 'build');
     }
 
-    // Bot auto-recruitment keeps the prototype opponent active; player
-    // production is banked for city buildings until #16 adds a queue.
-    if (owner === 'bot' && city.prod >= 12) {
-      city.prod -= 12;
-      const id = S.nextId++;
-      let spawnX = city.x, spawnY = city.y;
-      // Find empty adjacent tile
-      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1]]) {
-        const nx = city.x + dx, ny = city.y + dy;
-        if (nx >= 0 && nx < MAP_W && ny >= 0 && ny < MAP_H &&
-            !isWaterTerrain(S.map[ny][nx].terrain) &&
-            !S.units.find(u => u.x === nx && u.y === ny)) {
-          spawnX = nx; spawnY = ny; break;
-        }
-      }
-      const type = chooseUnitToTrain(owner);
-      const profile = getUnitProfile({ type });
-      S.units.push({
-        id,
-        owner,
-        x: spawnX,
-        y: spawnY,
-        hp: 100,
-        atk: profile.strength,
-        def: profile.defense,
-        mov: 2,
-        movLeft: 2,
-        type,
-        xp: 0,
-        level: 1,
-      });
-      if (owner === 'player') playAudioEvent(AUDIO_EVENTS.build);
-      log(`${city.name} trained a ${type}!`, 'build');
-      if (owner === 'player') revealAround(spawnX, spawnY);
+    if (owner === 'bot' && city.productionQueue.items.length === 0) {
+      enqueueProduction(city.productionQueue, 'warrior');
     }
+
+    const result = progressProductionQueue(city.productionQueue, city.prod);
+    city.productionQueue = result.queue;
+    city.prod = city.productionQueue.progress;
+    result.completed.forEach(item => spawnUnitFromProduction(owner, city, item));
   }
   S.resources[owner].food += totalFood;
   S.resources[owner].prod += totalProd;
@@ -1119,6 +1143,8 @@ function endPlayerTurn() {
   updateEmpireHud();
   completeResearch('player', res.science);
   updateHud();
+  updateCityPanel();
+  updateProductionPanel();
   log(`Income: +${res.food} food, +${res.prod} prod, +${res.science} science, +${res.gold} gold`, 'build');
 
   setTimeout(botTurn, 400);
@@ -1135,6 +1161,8 @@ function startPlayerTurn() {
   claimTerritory(S.map, S.cities);
   updateHud();
   updateTechPanel();
+  updateCityPanel();
+  updateProductionPanel();
   log(`─── Turn ${S.turn} ───`);
   maybeQueueRandomEvent();
   renderEventPanel();
@@ -1193,7 +1221,10 @@ function botTurn() {
         addCaptureFeedback(cap);
         claimTerritory(S.map, S.cities);
         updateHud();
+        updateCityPanel();
+        updateProductionPanel();
         log(`Bot captured ${cap.name}!`, 'combat');
+        checkWin();
       }
       continue;
     }
@@ -1219,7 +1250,6 @@ function botTurn() {
         movLeft -= cost;
         steps++;
       }
-      bot.movLeft = movLeft;
       // Capture city
       const cap = S.cities.find(c => c.owner === 'player' && c.x === bot.x && c.y === bot.y);
       if (cap) {
@@ -1227,7 +1257,10 @@ function botTurn() {
         addCaptureFeedback(cap);
         claimTerritory(S.map, S.cities);
         updateHud();
+        updateCityPanel();
+        updateProductionPanel();
         log(`Bot captured ${cap.name}!`, 'combat');
+        checkWin();
       }
     }
   }
@@ -1927,6 +1960,46 @@ function updateUnitPanel() {
   }
 }
 
+// ─── Production queue panel ─────────────────────────
+function updateProductionPanel() {
+  if (!dom.prodPanel) return;
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) {
+    dom.prodPanel.innerHTML = '<p class="placeholder">No city remains</p>';
+    return;
+  }
+
+  const current = city.productionQueue.items[0];
+  const pct = current ? Math.min(100, Math.round((city.productionQueue.progress / current.cost) * 100)) : 0;
+  const queueText = city.productionQueue.items.length > 1
+    ? city.productionQueue.items.slice(1).map(item => item.label).join(' → ')
+    : 'No queued follow-up';
+
+  dom.prodPanel.innerHTML = `
+    <div class="city-row">
+      <span class="city-name">${city.name}</span>
+      <span class="queue-meta">Pop ${city.pop}</span>
+    </div>
+    <div class="queue-row">
+      <span class="queue-name">${current ? current.label : 'Idle'}</span>
+      <span class="queue-meta">${current ? `${city.productionQueue.progress}/${current.cost}` : '0/0'}</span>
+    </div>
+    <div class="queue-track" aria-label="Production progress">
+      <div class="queue-fill" style="--pct: ${pct}%"></div>
+    </div>
+    <div class="queue-list">Next: ${queueText}</div>
+    <div class="queue-list">Win: capture Babylon or remove all bot pieces.</div>`;
+}
+
+function queueCityProduction(itemId) {
+  if (S.phase === 'gameover') return;
+  const city = S.cities.find(c => c.owner === 'player');
+  if (!city) return;
+  const item = enqueueProduction(city.productionQueue, itemId).items.at(-1);
+  log(`${city.name} queued ${item.label}`, 'build');
+  updateProductionPanel();
+}
+
 // ─── City management panel ──────────────────────────
 function updateCityPanel() {
   const city = S.cities.find(c => c.owner === 'player');
@@ -2208,6 +2281,7 @@ function handleClick(tx, ty) {
             claimTerritory(S.map, S.cities);
             updateHud();
             updateCityPanel();
+            updateProductionPanel();
             playAudioEvent(AUDIO_EVENTS.build);
             log(`Captured ${cap.name}!`, 'build');
             checkWin();
@@ -2280,6 +2354,8 @@ document.getElementById('btnCenter').addEventListener('click', () => {
     centerOn(u.x, u.y);
   }
 });
+document.getElementById('btnQueueWarrior')?.addEventListener('click', () => queueCityProduction('warrior'));
+document.getElementById('btnQueueScout')?.addEventListener('click', () => queueCityProduction('scout'));
 dom.btnStartSetup?.addEventListener('click', () => applyGameSetup());
 renderSetupRoster();
 dom.cityDet.addEventListener('click', e => {
@@ -2295,6 +2371,7 @@ dom.cityDet.addEventListener('click', e => {
     log(`Cannot build ${CITY_BUILDINGS[btn.dataset.building]?.name || 'building'}: ${result.reason}.`, 'combat');
   }
   updateCityPanel();
+  updateProductionPanel();
 });
 dom.tradeBtn.addEventListener('click', openTradeRoute);
 document.getElementById('btnHelp').addEventListener('click', () => setTutorial());
@@ -2392,5 +2469,7 @@ function gameLoop(now) {
   updateEmpireHud();
   renderEventPanel();
   updateTechPanel();
+  updateCityPanel();
+  updateProductionPanel();
   requestAnimationFrame(gameLoop);
 })();
