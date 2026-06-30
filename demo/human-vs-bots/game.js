@@ -1,3 +1,11 @@
+import {
+  createAIOpponentController,
+  createLocalOpenAIProvider,
+  createMcpProvider,
+  createProxyProvider,
+  getAntiFarmMetadata,
+} from './ai-opponent.js';
+
 const canvas = document.getElementById('arena');
 const ctx = canvas.getContext('2d');
 const HEX_SIZE = 34;
@@ -47,12 +55,18 @@ const ui = {
   proofCount: document.getElementById('proofCount'),
   matchState: document.getElementById('matchState'),
   selectedAI: document.getElementById('selectedAI'),
+  selectedAIProvider: document.getElementById('selectedAIProvider'),
   selectedMode: document.getElementById('selectedMode'),
   selectedHumanModel: document.getElementById('selectedHumanModel'),
   selectedDifficulty: document.getElementById('selectedDifficulty'),
   humanTerritory: document.getElementById('humanTerritory'),
   botTerritory: document.getElementById('botTerritory'),
   aiSelect: document.getElementById('aiSelect'),
+  aiProviderSelect: document.getElementById('aiProviderSelect'),
+  aiEndpointInput: document.getElementById('aiEndpointInput'),
+  aiModelInput: document.getElementById('aiModelInput'),
+  aiConnectionState: document.getElementById('aiConnectionState'),
+  btnTestAiProvider: document.getElementById('btnTestAiProvider'),
   modeSelect: document.getElementById('modeSelect'),
   llmHumanSelect: document.getElementById('llmHumanSelect'),
   difficultySelect: document.getElementById('difficultySelect'),
@@ -80,6 +94,12 @@ const state = {
   selectedAI: 'claude-3-5-sonnet',
   selectedHumanModel: 'claude-3-5-sonnet',
   selectedDifficulty: 'normal',
+  aiOpponent: {
+    provider: 'heuristic',
+    endpoint: '/api/ai-opponent/decide',
+    model: 'claude-3-5-sonnet',
+    connectionState: 'Heuristic fallback ready',
+  },
   mapCells: [],
   mapByKey: {},
   humansByPos: {},
@@ -149,6 +169,13 @@ function getHumanSideProfile() {
 function formatModelLabel(modelId) {
   const p = getModelProfile(modelId);
   return `${p.name} (${p.difficulty})`;
+}
+
+function aiProviderLabel(providerId = state.aiOpponent.provider) {
+  if (providerId === 'proxy') return 'Cloud Proxy';
+  if (providerId === 'local-openai') return 'Local OpenAI-compatible';
+  if (providerId === 'mcp') return 'MCP Tool';
+  return 'Heuristic';
 }
 
 const HEX_DIRS = [
@@ -535,50 +562,119 @@ function nearestEnemy(unit, enemies) {
   return { target: best, dist: bestDist };
 }
 
-function chooseAiAction(unit, teamKind) {
+function chooseHeuristicAction(unit, teamKind, legalActions) {
   const enemyKind = teamKind === 'human' ? 'bot' : 'human';
-  const ownOwner = teamKind;
   const enemies = (enemyKind === 'human' ? state.humans : state.bots).filter(u => u.alive);
-  if (!enemies.length) return;
+  if (!enemies.length) return legalActions.find(action => action.type === 'wait') || null;
 
   const profile = teamKind === 'bot' ? getOpponentProfile() : (getHumanSideProfile() || getModelProfile('clawbot-v2'));
   const style = profile.style;
 
-  const adjacentEnemy = getNeighbors(unit.q, unit.r)
-    .map(c => getCellUnit(c.q, c.r, enemyKind))
-    .find(Boolean);
-
-  if (adjacentEnemy) {
-    attack(unit, adjacentEnemy);
-    return;
-  }
-
-  const conquerOption = getNeighbors(unit.q, unit.r)
-    .map(c => state.mapByKey[key(c.q, c.r)])
-    .find(c => c && c.terrain !== 'water' && c.owner !== ownOwner && !isOccupied(c.q, c.r));
+  const attackAction = legalActions.find(action => action.type === 'attack');
+  if (attackAction) return attackAction;
 
   const shouldConquer = style === 'defensive' ? Math.random() < 0.7 : style === 'swarm' ? Math.random() < 0.55 : Math.random() < 0.4;
-  if (conquerOption && shouldConquer) {
-    conquerOption.owner = ownOwner;
-    unit.acted = true;
-    return;
-  }
+  const conquerAction = legalActions.find(action => action.type === 'conquer');
+  if (conquerAction && shouldConquer) return conquerAction;
 
   const { target } = nearestEnemy(unit, enemies);
-  if (!target) return;
+  if (!target) return legalActions.find(action => action.type === 'wait') || null;
 
-  const options = getNeighbors(unit.q, unit.r)
-    .filter(n => isPassable(n.q, n.r) && !isOccupied(n.q, n.r));
-  if (!options.length) return;
+  const moveActions = legalActions.filter(action => action.type === 'move');
+  if (!moveActions.length) return legalActions.find(action => action.type === 'wait') || null;
 
-  options.sort((a, b) => {
+  moveActions.sort((a, b) => {
     const da = hexDistance(a.q, a.r, target.q, target.r);
     const db = hexDistance(b.q, b.r, target.q, target.r);
     if (style === 'defensive') return db - da;
     return da - db;
   });
 
-  moveUnit(unit, options[0].q, options[0].r);
+  return moveActions[0];
+}
+
+function getMcpClient(toolName) {
+  const bridge = globalThis.HumanVsBotsMcp;
+  if (typeof bridge?.callTool === 'function') return bridge;
+  if (typeof bridge?.[toolName] === 'function') {
+    return { callTool: (name, payload) => bridge[name](payload) };
+  }
+  return null;
+}
+
+function createConfiguredAiProvider(unit, teamKind) {
+  const provider = state.aiOpponent.provider;
+  if (provider === 'proxy') {
+    return createProxyProvider({
+      endpoint: state.aiOpponent.endpoint || '/api/ai-opponent/decide',
+      model: state.aiOpponent.model || state.selectedAI,
+    });
+  }
+  if (provider === 'local-openai') {
+    return createLocalOpenAIProvider({
+      baseUrl: state.aiOpponent.endpoint || 'http://localhost:11434/v1',
+      model: state.aiOpponent.model || 'llama3.1',
+    });
+  }
+  if (provider === 'mcp') {
+    return createMcpProvider({
+      toolName: state.aiOpponent.model || 'decideTurn',
+      mcpClient: getMcpClient(state.aiOpponent.model || 'decideTurn'),
+    });
+  }
+  return {
+    id: 'heuristic',
+    decideTurn: async ({ legalActions }) => chooseHeuristicAction(unit, teamKind, legalActions),
+  };
+}
+
+function applyAiAction(action, teamKind) {
+  if (!action) return false;
+  const unit = getUnitById(action.unitId);
+  if (!unit?.alive || unit.acted || unit.kind !== teamKind) return false;
+
+  if (action.type === 'attack') {
+    const target = getUnitById(action.targetId);
+    if (!target?.alive) return false;
+    attack(unit, target);
+    return true;
+  }
+
+  if (action.type === 'conquer') {
+    const cell = state.mapByKey[key(action.q, action.r)];
+    if (!cell || cell.terrain === 'water' || isOccupied(action.q, action.r)) return false;
+    cell.owner = teamKind;
+    unit.acted = true;
+    log(`${teamKind.toUpperCase()} ${unit.unitType} conquered ${action.q},${action.r}`, teamKind === 'bot' ? 'warn' : 'ok');
+    return true;
+  }
+
+  if (action.type === 'move') {
+    if (!isPassable(action.q, action.r) || isOccupied(action.q, action.r)) return false;
+    moveUnit(unit, action.q, action.r);
+    log(`${teamKind.toUpperCase()} ${unit.unitType} moved`);
+    return true;
+  }
+
+  if (action.type === 'wait') {
+    unit.acted = true;
+    return true;
+  }
+  return false;
+}
+
+async function chooseAiAction(unit, teamKind) {
+  const provider = createConfiguredAiProvider(unit, teamKind);
+  const controller = createAIOpponentController({
+    provider,
+    fallbackDecider: ({ legalActions }) => chooseHeuristicAction(unit, teamKind, legalActions),
+  });
+
+  const decision = await controller.decideUnitAction({ gameState: state, unit, teamKind });
+  if (decision.source === 'fallback' && provider.id !== 'heuristic') {
+    log(`${aiProviderLabel(provider.id)} returned no legal action; heuristic fallback used`, 'warn');
+  }
+  applyAiAction(decision.action, teamKind);
 }
 
 function countTerritory(owner) {
@@ -773,11 +869,18 @@ function handlePlayerCellClick(cell) {
 }
 
 function buildProofSnapshot(tag = 'turn') {
+  const antiFarm = getAntiFarmMetadata({
+    matchMode: state.matchMode,
+    aiControlsHumanSide: state.matchMode === 'llm-vs-llm',
+    opponentProvider: state.aiOpponent.provider,
+  });
   const payload = {
     tag,
     turn: state.turn,
     ai: state.selectedAI,
+    aiOpponentProvider: state.aiOpponent.provider,
     difficulty: state.selectedDifficulty,
+    antiFarm,
     humansAlive: state.humans.filter(u => u.alive).length,
     botsAlive: state.bots.filter(u => u.alive).length,
     humanTerritory: countTerritory('human'),
@@ -789,55 +892,7 @@ function buildProofSnapshot(tag = 'turn') {
   return payload;
 }
 
-function endPlayerTurn() {
-  if (!state.inMatch) return;
-
-  if (state.matchMode === 'llm-vs-llm') {
-    state.phase = 'simulation';
-    state.captureMode = false;
-    syncUi();
-
-    produceHumanAiUnit();
-    for (const unit of state.humans.filter(u => u.alive)) {
-      chooseAiAction(unit, 'human');
-      if (checkVictory()) return;
-    }
-
-    produceBotRobot();
-    for (const bot of state.bots.filter(u => u.alive)) {
-      chooseAiAction(bot, 'bot');
-      if (checkVictory()) return;
-    }
-
-    for (const unit of state.humans) {
-      unit.acted = false;
-      unit.selected = false;
-    }
-    for (const unit of state.bots) unit.acted = false;
-    Object.values(state.structures.human).forEach(structure => { structure.acted = false; });
-    Object.values(state.structures.bot).forEach(structure => { structure.acted = false; });
-
-    state.selectedUnitId = null;
-    state.turn += 1;
-    const proof = buildProofSnapshot('turn');
-    log(`Round ${state.turn}: ${formatModelLabel(state.selectedHumanModel)} vs ${formatModelLabel(state.selectedAI)} • ${proof.proofInputHash.slice(0, 14)}...`, 'ok');
-    syncUi();
-    return;
-  }
-
-  if (state.phase !== 'player') return;
-
-  state.phase = 'bot';
-  state.captureMode = false;
-  syncUi();
-  log(`Opponent turn: ${formatModelLabel(state.selectedAI)}`);
-
-  produceBotRobot();
-  for (const bot of state.bots.filter(u => u.alive)) {
-    chooseAiAction(bot, 'bot');
-    if (checkVictory()) return;
-  }
-
+function resetTurnActors() {
   for (const unit of state.humans) {
     unit.acted = false;
     unit.selected = false;
@@ -846,14 +901,61 @@ function endPlayerTurn() {
 
   Object.values(state.structures.human).forEach(structure => { structure.acted = false; });
   Object.values(state.structures.bot).forEach(structure => { structure.acted = false; });
-
   state.selectedUnitId = null;
-  state.phase = 'player';
-  state.turn += 1;
+}
 
+function completeTurnCycle(message) {
+  resetTurnActors();
+  state.turn += 1;
   const proof = buildProofSnapshot('turn');
-  log(`Turn ${state.turn} closed. Proof: ${proof.proofInputHash.slice(0, 14)}...`, 'ok');
+  log(message(proof), 'ok');
   syncUi();
+}
+
+async function runTeamAiTurns(units, teamKind) {
+  for (const unit of units.filter(u => u.alive)) {
+    await chooseAiAction(unit, teamKind);
+    if (checkVictory()) return true;
+  }
+  return false;
+}
+
+async function runSimulationRound() {
+  state.phase = 'simulation';
+  state.captureMode = false;
+  syncUi();
+
+  produceHumanAiUnit();
+  if (await runTeamAiTurns(state.humans, 'human')) return;
+
+  produceBotRobot();
+  if (await runTeamAiTurns(state.bots, 'bot')) return;
+
+  completeTurnCycle(proof => `Round ${state.turn}: ${formatModelLabel(state.selectedHumanModel)} vs ${formatModelLabel(state.selectedAI)} • ${proof.proofInputHash.slice(0, 14)}...`);
+}
+
+async function runBotTurn() {
+  if (state.phase !== 'player') return;
+
+  state.phase = 'bot';
+  state.captureMode = false;
+  syncUi();
+  log(`Opponent turn: ${formatModelLabel(state.selectedAI)}`);
+
+  produceBotRobot();
+  if (await runTeamAiTurns(state.bots, 'bot')) return;
+
+  state.phase = 'player';
+  completeTurnCycle(proof => `Turn ${state.turn} closed. Proof: ${proof.proofInputHash.slice(0, 14)}...`);
+}
+
+async function endPlayerTurn() {
+  if (!state.inMatch) return;
+  if (state.matchMode === 'llm-vs-llm') {
+    await runSimulationRound();
+    return;
+  }
+  await runBotTurn();
 }
 
 function finishMatch(result) {
@@ -1033,7 +1135,9 @@ function syncUi() {
   ui.selectedMode.textContent = state.matchMode === 'llm-vs-llm' ? 'LLM vs LLM' : 'Human vs LLM';
   ui.selectedHumanModel.textContent = formatModelLabel(state.selectedHumanModel);
   ui.selectedAI.textContent = formatModelLabel(state.selectedAI);
+  ui.selectedAIProvider.textContent = aiProviderLabel();
   ui.selectedDifficulty.textContent = state.selectedDifficulty;
+  ui.aiConnectionState.textContent = state.aiOpponent.connectionState;
   ui.matchState.textContent = state.inMatch ? 'Running' : 'Idle';
   ui.walletState.textContent = state.connected ? 'Wallet: Connected' : 'Wallet: Disconnected';
   ui.humanTerritory.textContent = String(countTerritory('human'));
@@ -1054,9 +1158,51 @@ function syncUi() {
   ui.llmHumanSelect.disabled = state.matchMode !== 'llm-vs-llm' || state.inMatch;
   ui.modeSelect.disabled = state.inMatch;
   ui.aiSelect.disabled = state.inMatch;
+  ui.aiProviderSelect.disabled = state.inMatch;
+  ui.aiEndpointInput.disabled = state.inMatch || state.aiOpponent.provider === 'heuristic' || state.aiOpponent.provider === 'mcp';
+  ui.aiModelInput.disabled = state.inMatch || state.aiOpponent.provider === 'heuristic';
+  ui.btnTestAiProvider.disabled = state.inMatch;
 
   ui.btnEndTurn.classList.toggle('active-turn', canAdvance);
   ui.btnConquer.classList.toggle('active-turn', state.captureMode);
+}
+
+function syncAiProviderConfigFromUi() {
+  state.aiOpponent.provider = ui.aiProviderSelect.value;
+  state.aiOpponent.endpoint = ui.aiEndpointInput.value.trim();
+  state.aiOpponent.model = ui.aiModelInput.value.trim();
+  if (state.aiOpponent.provider === 'heuristic') {
+    state.aiOpponent.connectionState = 'Heuristic fallback ready';
+  } else {
+    state.aiOpponent.connectionState = `${aiProviderLabel()} configured`;
+  }
+  syncUi();
+}
+
+async function testAiProviderConnection() {
+  syncAiProviderConfigFromUi();
+  const sampleUnit = state.bots.find(unit => unit.alive) || state.humans.find(unit => unit.alive);
+  if (!sampleUnit) {
+    state.aiOpponent.connectionState = 'No unit available for test';
+    syncUi();
+    return;
+  }
+
+  const provider = createConfiguredAiProvider(sampleUnit, sampleUnit.kind);
+  try {
+    const action = await provider.decideTurn({
+      gameState: {
+        turn: state.turn,
+        mode: state.matchMode,
+        activeUnit: { id: sampleUnit.id, kind: sampleUnit.kind, unitType: sampleUnit.unitType },
+      },
+      legalActions: [{ type: 'wait', unitId: sampleUnit.id }],
+    });
+    state.aiOpponent.connectionState = action ? `${aiProviderLabel(provider.id)} returned a test action` : `${aiProviderLabel(provider.id)} reachable`;
+  } catch (error) {
+    state.aiOpponent.connectionState = `Connection failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  syncUi();
 }
 
 function resetArena() {
@@ -1072,6 +1218,12 @@ function resetArena() {
   state.selectedAI = ui.aiSelect.value;
   state.selectedHumanModel = ui.llmHumanSelect.value;
   state.selectedDifficulty = ui.difficultySelect.value;
+  state.aiOpponent.provider = ui.aiProviderSelect.value;
+  state.aiOpponent.endpoint = ui.aiEndpointInput.value.trim();
+  state.aiOpponent.model = ui.aiModelInput.value.trim();
+  state.aiOpponent.connectionState = state.aiOpponent.provider === 'heuristic'
+    ? 'Heuristic fallback ready'
+    : `${aiProviderLabel()} configured`;
 
   ui.resultBanner.classList.remove('show');
   ui.resultBanner.textContent = '';
@@ -1105,9 +1257,31 @@ canvas.addEventListener('wheel', event => {
 
 ui.aiSelect.addEventListener('change', () => {
   state.selectedAI = ui.aiSelect.value;
+  if (state.aiOpponent.provider === 'heuristic') {
+    ui.aiModelInput.value = state.selectedAI;
+    state.aiOpponent.model = state.selectedAI;
+  }
   syncUi();
   log(`Opponent selected: ${formatModelLabel(state.selectedAI)}`, 'warn');
 });
+
+ui.aiProviderSelect.addEventListener('change', () => {
+  if (ui.aiProviderSelect.value === 'proxy') {
+    ui.aiEndpointInput.value = '/api/ai-opponent/decide';
+    ui.aiModelInput.value = state.selectedAI;
+  } else if (ui.aiProviderSelect.value === 'local-openai') {
+    ui.aiEndpointInput.value = 'http://localhost:11434/v1';
+    ui.aiModelInput.value = 'llama3.1';
+  } else if (ui.aiProviderSelect.value === 'mcp') {
+    ui.aiModelInput.value = 'decideTurn';
+  }
+  syncAiProviderConfigFromUi();
+  log(`AI decision provider: ${aiProviderLabel()}`, 'warn');
+});
+
+ui.aiEndpointInput.addEventListener('change', syncAiProviderConfigFromUi);
+ui.aiModelInput.addEventListener('change', syncAiProviderConfigFromUi);
+ui.btnTestAiProvider.addEventListener('click', testAiProviderConnection);
 
 ui.llmHumanSelect.addEventListener('change', () => {
   state.selectedHumanModel = ui.llmHumanSelect.value;
@@ -1149,6 +1323,12 @@ ui.btnStart.addEventListener('click', async () => {
     mode: state.matchMode,
     llmA: state.selectedHumanModel,
     ai: state.selectedAI,
+    aiOpponentProvider: state.aiOpponent.provider,
+    antiFarm: getAntiFarmMetadata({
+      matchMode: state.matchMode,
+      aiControlsHumanSide: state.matchMode === 'llm-vs-llm',
+      opponentProvider: state.aiOpponent.provider,
+    }),
     difficulty: state.selectedDifficulty,
     contract: 'CB4VZAT2U3UC6XFK3N23SKRF2NDCMP3QHJYMCHHFMZO7MRQO6DQ2EMYG',
   });
@@ -1207,6 +1387,7 @@ ui.btnExportProofs.addEventListener('click', () => {
     game: 'human-vs-bots',
     mode: 'turn-based-buildings',
     ai: state.selectedAI,
+    aiOpponentProvider: state.aiOpponent.provider,
     difficulty: state.selectedDifficulty,
     proofs: state.proofs,
   }, null, 2)], { type: 'application/json' });

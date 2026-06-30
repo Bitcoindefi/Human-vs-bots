@@ -52,6 +52,19 @@
                             <option value="gpt-4.1-mini">OpenAI GPT-4.1 mini (Medium)</option>
                             <option value="o1-mini">OpenAI o1-mini (Very Hard)</option>
                         </select>
+                        <label class="field-label" for="aiProviderSelect">AI Decision Provider</label>
+                        <select id="aiProviderSelect">
+                            <option value="heuristic" selected>Heuristic fallback</option>
+                            <option value="proxy">Cloud proxy</option>
+                            <option value="local-openai">Local OpenAI-compatible</option>
+                            <option value="mcp">MCP tool</option>
+                        </select>
+                        <label class="field-label" for="aiEndpointInput">Proxy / Local Endpoint</label>
+                        <input id="aiEndpointInput" type="text" value="/api/ai-opponent/decide" spellcheck="false">
+                        <label class="field-label" for="aiModelInput">Model / MCP Tool</label>
+                        <input id="aiModelInput" type="text" value="claude-3-5-sonnet" spellcheck="false">
+                        <button id="btnTestAiProvider" type="button">Test AI Connection</button>
+                        <div class="connection-state" id="aiConnectionState">Heuristic fallback ready</div>
                         <label class="field-label" for="difficultySelect">Map Difficulty</label>
                         <select id="difficultySelect">
                             <option value="easy">Easy</option>
@@ -106,6 +119,7 @@
                             <div><span>Battle Mode</span><strong id="selectedMode">Human vs LLM</strong></div>
                             <div><span>LLM A</span><strong id="selectedHumanModel">Claude 3.5 Sonnet</strong></div>
                             <div><span>Opponent LLM</span><strong id="selectedAI">Claude 3.5 Sonnet</strong></div>
+                            <div><span>AI Provider</span><strong id="selectedAIProvider">Heuristic</strong></div>
                             <div><span>Map Difficulty</span><strong id="selectedDifficulty">normal</strong></div>
                             <div><span>Humans</span><strong id="humansCount">0</strong></div>
                             <div><span>Bots</span><strong id="botsCount">0</strong></div>
