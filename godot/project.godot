@@ -19,6 +19,8 @@ GameState="*res://autoloads/GameState.gd"
 EconomyManager="*res://autoloads/EconomyManager.gd"
 TurnManager="*res://autoloads/TurnManager.gd"
 WebBridge="*res://autoloads/WebBridge.gd"
+ParticlePool="*res://autoloads/ParticlePool.gd"
+ParticleManager="*res://autoloads/ParticleManager.gd"
 
 [display]
 

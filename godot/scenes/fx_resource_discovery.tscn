@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="Gradient" id="Gradient_resource"]
+offsets = PackedFloat32Array(0, 0.55, 1)
+colors = PackedColorArray(Color(0.35, 0.85, 1, 1), Color(0.2, 0.55, 1, 0.75), Color(0.08, 0.2, 0.65, 0))
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_resource"]
+gradient = SubResource("Gradient_resource")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_resource"]
+emission_shape = 1
+emission_sphere_radius = 20.0
+direction = Vector3(0, -1, 0)
+spread = 95.0
+gravity = Vector3(0, -12, 0)
+initial_velocity_min = 48.0
+initial_velocity_max = 108.0
+scale_min = 1.6
+scale_max = 4.2
+color = Color(0.28, 0.68, 1, 1)
+color_ramp = SubResource("Gradient_resource")
+
+[node name="FXResourceDiscovery" type="GPUParticles2D"]
+emitting = false
+amount = 80
+lifetime = 0.9
+one_shot = true
+explosiveness = 0.85
+randomness = 0.5
+process_material = SubResource("ParticleProcessMaterial_resource")
+texture = SubResource("GradientTexture1D_resource")
