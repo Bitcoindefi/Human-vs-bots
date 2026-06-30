@@ -5,7 +5,13 @@ import {
   buildProviderRequest,
   extractActionFromProviderResponse,
   resolveProxyConfig,
+  trimTrailingSlashes,
 } from './ai-opponent-proxy.mjs';
+
+test('trimTrailingSlashes removes final slash runs without touching the URL body', () => {
+  assert.equal(trimTrailingSlashes('https://api.openai.com/v1///'), 'https://api.openai.com/v1');
+  assert.equal(trimTrailingSlashes('https://api.anthropic.com'), 'https://api.anthropic.com');
+});
 
 test('resolveProxyConfig keeps provider secrets on the server side', () => {
   const config = resolveProxyConfig({

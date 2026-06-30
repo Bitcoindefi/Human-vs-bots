@@ -9,6 +9,7 @@ import {
   getAntiFarmMetadata,
   getLegalUnitActions,
   serializeGameStateForAI,
+  trimTrailingSlashes,
 } from './ai-opponent.js';
 
 function makeFixture() {
@@ -44,6 +45,11 @@ test('getLegalUnitActions lists only adjacent legal bot actions', () => {
     { type: 'attack', unitId: 3, targetId: 7 },
     { type: 'wait', unitId: 3 },
   ]);
+});
+
+test('trimTrailingSlashes removes only final slash runs', () => {
+  assert.equal(trimTrailingSlashes('http://localhost:11434/v1///'), 'http://localhost:11434/v1');
+  assert.equal(trimTrailingSlashes('http://localhost:11434/v1/chat/completions'), 'http://localhost:11434/v1/chat/completions');
 });
 
 test('AI controller accepts valid structured JSON from provider', async () => {

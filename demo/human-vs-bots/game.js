@@ -594,9 +594,9 @@ function chooseHeuristicAction(unit, teamKind, legalActions) {
 }
 
 function getMcpClient(toolName) {
-  const bridge = window.HumanVsBotsMcp;
-  if (bridge && typeof bridge.callTool === 'function') return bridge;
-  if (bridge && typeof bridge[toolName] === 'function') {
+  const bridge = globalThis.HumanVsBotsMcp;
+  if (typeof bridge?.callTool === 'function') return bridge;
+  if (typeof bridge?.[toolName] === 'function') {
     return { callTool: (name, payload) => bridge[name](payload) };
   }
   return null;
@@ -631,11 +631,11 @@ function createConfiguredAiProvider(unit, teamKind) {
 function applyAiAction(action, teamKind) {
   if (!action) return false;
   const unit = getUnitById(action.unitId);
-  if (!unit || !unit.alive || unit.acted || unit.kind !== teamKind) return false;
+  if (!unit?.alive || unit.acted || unit.kind !== teamKind) return false;
 
   if (action.type === 'attack') {
     const target = getUnitById(action.targetId);
-    if (!target || !target.alive) return false;
+    if (!target?.alive) return false;
     attack(unit, target);
     return true;
   }
@@ -892,55 +892,7 @@ function buildProofSnapshot(tag = 'turn') {
   return payload;
 }
 
-async function endPlayerTurn() {
-  if (!state.inMatch) return;
-
-  if (state.matchMode === 'llm-vs-llm') {
-    state.phase = 'simulation';
-    state.captureMode = false;
-    syncUi();
-
-    produceHumanAiUnit();
-    for (const unit of state.humans.filter(u => u.alive)) {
-      await chooseAiAction(unit, 'human');
-      if (checkVictory()) return;
-    }
-
-    produceBotRobot();
-    for (const bot of state.bots.filter(u => u.alive)) {
-      await chooseAiAction(bot, 'bot');
-      if (checkVictory()) return;
-    }
-
-    for (const unit of state.humans) {
-      unit.acted = false;
-      unit.selected = false;
-    }
-    for (const unit of state.bots) unit.acted = false;
-    Object.values(state.structures.human).forEach(structure => { structure.acted = false; });
-    Object.values(state.structures.bot).forEach(structure => { structure.acted = false; });
-
-    state.selectedUnitId = null;
-    state.turn += 1;
-    const proof = buildProofSnapshot('turn');
-    log(`Round ${state.turn}: ${formatModelLabel(state.selectedHumanModel)} vs ${formatModelLabel(state.selectedAI)} • ${proof.proofInputHash.slice(0, 14)}...`, 'ok');
-    syncUi();
-    return;
-  }
-
-  if (state.phase !== 'player') return;
-
-  state.phase = 'bot';
-  state.captureMode = false;
-  syncUi();
-  log(`Opponent turn: ${formatModelLabel(state.selectedAI)}`);
-
-  produceBotRobot();
-  for (const bot of state.bots.filter(u => u.alive)) {
-    await chooseAiAction(bot, 'bot');
-    if (checkVictory()) return;
-  }
-
+function resetTurnActors() {
   for (const unit of state.humans) {
     unit.acted = false;
     unit.selected = false;
@@ -949,14 +901,61 @@ async function endPlayerTurn() {
 
   Object.values(state.structures.human).forEach(structure => { structure.acted = false; });
   Object.values(state.structures.bot).forEach(structure => { structure.acted = false; });
-
   state.selectedUnitId = null;
-  state.phase = 'player';
-  state.turn += 1;
+}
 
+function completeTurnCycle(message) {
+  resetTurnActors();
+  state.turn += 1;
   const proof = buildProofSnapshot('turn');
-  log(`Turn ${state.turn} closed. Proof: ${proof.proofInputHash.slice(0, 14)}...`, 'ok');
+  log(message(proof), 'ok');
   syncUi();
+}
+
+async function runTeamAiTurns(units, teamKind) {
+  for (const unit of units.filter(u => u.alive)) {
+    await chooseAiAction(unit, teamKind);
+    if (checkVictory()) return true;
+  }
+  return false;
+}
+
+async function runSimulationRound() {
+  state.phase = 'simulation';
+  state.captureMode = false;
+  syncUi();
+
+  produceHumanAiUnit();
+  if (await runTeamAiTurns(state.humans, 'human')) return;
+
+  produceBotRobot();
+  if (await runTeamAiTurns(state.bots, 'bot')) return;
+
+  completeTurnCycle(proof => `Round ${state.turn}: ${formatModelLabel(state.selectedHumanModel)} vs ${formatModelLabel(state.selectedAI)} • ${proof.proofInputHash.slice(0, 14)}...`);
+}
+
+async function runBotTurn() {
+  if (state.phase !== 'player') return;
+
+  state.phase = 'bot';
+  state.captureMode = false;
+  syncUi();
+  log(`Opponent turn: ${formatModelLabel(state.selectedAI)}`);
+
+  produceBotRobot();
+  if (await runTeamAiTurns(state.bots, 'bot')) return;
+
+  state.phase = 'player';
+  completeTurnCycle(proof => `Turn ${state.turn} closed. Proof: ${proof.proofInputHash.slice(0, 14)}...`);
+}
+
+async function endPlayerTurn() {
+  if (!state.inMatch) return;
+  if (state.matchMode === 'llm-vs-llm') {
+    await runSimulationRound();
+    return;
+  }
+  await runBotTurn();
 }
 
 function finishMatch(result) {

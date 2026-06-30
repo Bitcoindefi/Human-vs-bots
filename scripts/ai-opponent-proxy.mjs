@@ -12,6 +12,14 @@ function parseJson(text) {
   return JSON.parse(trimmed);
 }
 
+export function trimTrailingSlashes(value) {
+  let result = String(value || '');
+  while (result.endsWith('/')) {
+    result = result.slice(0, -1);
+  }
+  return result;
+}
+
 export function resolveProxyConfig(env = process.env) {
   return {
     provider: (env.AI_OPPONENT_PROVIDER || 'openai').toLowerCase(),
@@ -28,7 +36,7 @@ export function buildProviderRequest({ config, payload }) {
   if (config.provider === 'anthropic') {
     if (!config.anthropicApiKey) throw new Error('ANTHROPIC_API_KEY is required for anthropic provider.');
     return {
-      url: `${config.anthropicBaseUrl.replace(/\/+$/, '')}/v1/messages`,
+      url: `${trimTrailingSlashes(config.anthropicBaseUrl)}/v1/messages`,
       options: {
         method: 'POST',
         headers: {
@@ -49,7 +57,7 @@ export function buildProviderRequest({ config, payload }) {
 
   if (!config.openaiApiKey) throw new Error('OPENAI_API_KEY is required for openai provider.');
   return {
-    url: `${config.openaiBaseUrl.replace(/\/+$/, '')}/chat/completions`,
+    url: `${trimTrailingSlashes(config.openaiBaseUrl)}/chat/completions`,
     options: {
       method: 'POST',
       headers: {

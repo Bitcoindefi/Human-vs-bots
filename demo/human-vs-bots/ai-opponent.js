@@ -84,6 +84,14 @@ function normalizeAction(rawAction) {
   return null;
 }
 
+export function trimTrailingSlashes(value) {
+  let result = String(value || '');
+  while (result.endsWith('/')) {
+    result = result.slice(0, -1);
+  }
+  return result;
+}
+
 function getFetch(fetchImpl) {
   if (fetchImpl) return fetchImpl;
   if (typeof fetch === 'function') return fetch;
@@ -138,7 +146,7 @@ export function createLocalOpenAIProvider({ baseUrl = 'http://localhost:11434/v1
     id: 'local-openai',
     async decideTurn({ gameState, legalActions }) {
       const doFetch = getFetch(fetchImpl);
-      const endpoint = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
+      const endpoint = `${trimTrailingSlashes(baseUrl)}/chat/completions`;
       const headers = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       const response = await doFetch(endpoint, {
@@ -183,7 +191,7 @@ export function getAntiFarmMetadata({ matchMode, aiControlsHumanSide, opponentPr
 }
 
 export function getLegalUnitActions({ gameState, unit, teamKind }) {
-  if (!unit || !unit.alive || unit.acted) return [];
+  if (!unit?.alive || unit.acted) return [];
   const enemyKind = teamKind === 'human' ? 'bot' : 'human';
   const actions = [];
 
