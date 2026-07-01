@@ -19,4 +19,6 @@ godot-export:
 	DIST_PATH="$$(pwd)/dist/index.html"; \
 	echo "Exporting Godot Web build with $$GODOT_BIN to $$DIST_PATH"; \
 	"$$GODOT_BIN" --headless --path godot --export-release Web "$$DIST_PATH"; \
-	cp godot/web/stellar_bridge.js "$$(dirname "$$DIST_PATH")/stellar_bridge.js"
+	cp godot/web/stellar_bridge.js "$$(dirname "$$DIST_PATH")/stellar_bridge.js"; \
+	cp godot/web/stellar_game_service.js "$$(dirname "$$DIST_PATH")/stellar_game_service.js"; \
+	cp godot/web_template/index.html "$$(dirname "$$DIST_PATH")/index.html"

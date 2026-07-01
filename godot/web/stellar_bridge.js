@@ -7,6 +7,14 @@
  * `window.HumanVsBotsBridge.configure(handlers)`. Every handler may return a
  * value or a Promise. Godot sends action payloads as JSON strings and this
  * adapter sends result payloads back as JSON strings.
+ *
+ * Expected handlers:
+ *   connectWallet()     -> string | { address: string }
+ *   getAddress()        -> string | { address: string }
+ *   commitAction(payload) -> { txHash: string, ... }
+ *   revealAction(payload) -> { txHash: string, ... }
+ *   generateProof(payload) -> { proof: string, publicInputs: [], proofId: string }
+ *   exportProof(payload)   -> { filename: string, ... }
  */
 (function installHumanVsBotsBridge(global) {
   "use strict";
@@ -99,7 +107,7 @@
       notify("addressReceived", address);
       return result;
     } catch (error) {
-      notify("bridgeError", "get_address", errorMessage(error));
+      notify("bridgeError", "get_wallet_address", errorMessage(error));
       return null;
     }
   }
