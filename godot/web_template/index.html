@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Human vs Bots — Web3 Arena</title>
+    <style>
+        body { margin: 0; padding: 0; background: #0a0a0a; overflow: hidden; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        canvas { display: block; outline: none; }
+        #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                   color: #00ff88; font-family: monospace; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading Human vs Bots...</div>
+    <div id="canvas-container"></div>
+
+    <!--
+      Stellar / ZK JavaScript layer loaded BEFORE Godot runtime.
+      This ensures window.HumanVsBotsBridge is ready when Godot boots.
+    -->
+    <script src="stellar_bridge.js"></script>
+    <script src="stellar_game_service.js"></script>
+
+    <script>
+    // Configure the bridge with real StellarGameService implementations
+    (async function() {
+        // Wait for StellarGameService to be available (if loaded asynchronously)
+        while (typeof StellarGameService === "undefined") {
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        const service = new StellarGameService();
+
+        window.HumanVsBotsBridge.configure({
+            connectWallet: async () => {
+                const result = await service.connectWallet();
+                return { address: result.address };
+            },
+            getAddress: async () => {
+                const addr = await service.getAddress();
+                return { address: addr };
+            },
+            commitAction: async (payload) => {
+                const tx = await service.commitAction(payload.hash);
+                return { txHash: tx.hash, ledger: tx.ledger, status: "committed" };
+            },
+            revealAction: async (payload) => {
+                const tx = await service.revealAction(payload.key);
+                return { txHash: tx.hash, ledger: tx.ledger, status: "revealed" };
+            },
+            generateProof: async (payload) => {
+                const proof = await service.generateProof(payload);
+                return {
+                    proofId: proof.id,
+                    proof: proof.proof,
+                    publicInputs: proof.publicInputs,
+                };
+            },
+            exportProof: async (payload) => {
+                const exported = await service.exportProof(payload);
+                return { filename: exported.filename, url: exported.url };
+            },
+        });
+
+        document.getElementById("loading").textContent = "Starting engine...";
+    })();
+    </script>
+
+    <!-- Godot engine bootstrap -->
+    <script src="$GODOT_URL"></script>
+    <script>
+        const engine = new Engine($GODOT_CONFIG);
+        engine.startGame({
+            onProgress: (current, total) => {
+                const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+                document.getElementById("loading").textContent =
+                    `Loading... ${pct}%`;
+            },
+            onExecute: () => {
+                document.getElementById("loading").style.display = "none";
+            },
+        }).catch(err => {
+            console.error("Godot failed to start:", err);
+            document.getElementById("loading").textContent =
+                "Failed to start game. Please reload.";
+        });
+    </script>
+</body>
+</html>
